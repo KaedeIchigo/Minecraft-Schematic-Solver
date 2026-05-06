@@ -3,7 +3,7 @@ import { OrbitControls, Grid, Stats } from '@react-three/drei'
 import { Suspense, useMemo, useState } from 'react'
 import { BoxGeometry } from 'three'
 import type { BlockEntry, Anchor, ConnectionPort, Vec3 } from '@shared/types.js'
-import { getBlockColor } from '@shared/blockColors.js'
+import { getBlockColorForEntry } from '@shared/blockColors.js'
 
 interface VoxelRendererProps {
   blocks: BlockEntry[]
@@ -114,7 +114,7 @@ function VoxelMesh({ blocks, onBlockClick }: { blocks: BlockEntry[]; onBlockClic
   const groups = useMemo(() => {
     const map = new Map<string, BlockEntry[]>()
     for (const b of blocks) {
-      const { color } = getBlockColor(b.blockId)
+      const { color } = getBlockColorForEntry(b)
       if (!map.has(color)) map.set(color, [])
       map.get(color)!.push(b)
     }

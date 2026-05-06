@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { api } from '../store/api.ts'
 import { useAppStore } from '../store/appStore.ts'
 import type { Blueprint } from '@shared/types.js'
+import { resolveBlock } from '@shared/blockRegistry.js'
 
 const API_KEY_STORAGE = 'openrouter_api_key'
 const MODEL_STORAGE   = 'openrouter_model'
@@ -226,6 +227,41 @@ export default function Generator() {
                   {Object.entries(blueprint.material_palette).map(([k, v]) => (
                     <div key={k}><span className="text-gray-500">{k}:</span> {v}</div>
                   ))}
+                </div>
+              </div>
+
+              <div>
+                <div className="text-xs text-gray-400 mb-1">Palette preview (resolved)</div>
+                <div className="space-y-1">
+                  {Object.entries(blueprint.material_palette).map(([key, abstract]) => {
+                    const resolved = resolveBlock(abstract)
+                    const camo = resolved.nbtData?.['CamoState'] as { Name?: string } | undefined
+                    return (
+                      <div key={key} className="flex items-center justify-between text-xs bg-gray-800 px-2 py-1 rounded font-mono">
+                        <span className="text-gray-400 w-32 shrink-0">{key}</span>
+                        <span className="text-gray-300 w-32 shrink-0">{abstract}</span>
+                        <span className="text-gray-500 mx-1">→</span>
+                        <span className="text-emerald-300 truncate flex-1">
+                          {resolved.blockId}
+                          {camo?.Name && (
+                            <span className="text-purple-300 ml-1">camo:{camo.Name}</span>
+                          )}
+                        </span>
+                      </div>
+                    )
+                  })}
+                  <div className="flex items-center justify-between text-xs bg-gray-800 px-2 py-1 rounded font-mono">
+                    <span className="text-gray-400 w-32 shrink-0">framed_pillar</span>
+                    <span className="text-gray-300 w-32 shrink-0">framed_{blueprint.material_palette.frame_material}</span>
+                    <span className="text-gray-500 mx-1">→</span>
+                    <span className="text-emerald-300 truncate flex-1">
+                      {(() => {
+                        const r = resolveBlock(`framed_${blueprint.material_palette.frame_material}`)
+                        const c = r.nbtData?.['CamoState'] as { Name?: string } | undefined
+                        return <>{r.blockId}{c?.Name && <span className="text-purple-300 ml-1">camo:{c.Name}</span>}</>
+                      })()}
+                    </span>
+                  </div>
                 </div>
               </div>
 

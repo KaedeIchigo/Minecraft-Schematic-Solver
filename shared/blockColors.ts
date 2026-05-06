@@ -158,6 +158,21 @@ const KNOWN_COLORS: Record<string, BlockColorEntry> = {
   'minecraft:target': { color: '#D0504A' },
   'minecraft:tnt': { color: '#C03020' },
 
+  // Slabs / utility markers
+  'minecraft:smooth_stone_slab': { color: '#9E9E9E' },
+  'minecraft:structure_void': { color: '#FF00FF' },
+
+  // Framed blocks (default appearance — overridden per-entry by camo color)
+  'framed_blocks:framed_cube': { color: '#A09070' },
+
+  // Copper variants used by the registry
+  'minecraft:exposed_copper': { color: '#B05030' },
+  'minecraft:oxidized_copper': { color: '#3DA888' },
+
+  // Create
+  'create:grate': { color: '#7A7A7A' },
+  'create:copper_grate': { color: '#B07050' },
+
   // Mod-generic fallbacks by prefix
 }
 
@@ -187,6 +202,7 @@ const CATEGORY_COLORS: Array<{ prefix: string; color: string }> = [
   { prefix: 'functionalstorage:', color: '#705030' },
   { prefix: 'sophisticatedstorage:', color: '#806040' },
   { prefix: 'storagedrawers:', color: '#806040' },
+  { prefix: 'framed_blocks:', color: '#A09070' },
 ]
 
 export function getBlockColor(blockId: string): BlockColorEntry {
@@ -204,6 +220,23 @@ export function getBlockColor(blockId: string): BlockColorEntry {
 
   // Hash the block ID to get a consistent color
   return { color: hashColor(blockId) }
+}
+
+/**
+ * Renderer-friendly color lookup for an entire BlockEntry. For framed blocks
+ * (framed_blocks:framed_cube), the color is taken from the embedded
+ * CamoState's block ID so the cube renders like its underlying camo material.
+ */
+export function getBlockColorForEntry(entry: {
+  blockId: string
+  nbtData?: Record<string, unknown>
+}): BlockColorEntry {
+  if (entry.blockId === 'framed_blocks:framed_cube' && entry.nbtData) {
+    const camo = entry.nbtData['CamoState'] as { Name?: unknown } | undefined
+    const camoName = camo && typeof camo.Name === 'string' ? camo.Name : null
+    if (camoName && camoName !== 'minecraft:air') return getBlockColor(camoName)
+  }
+  return getBlockColor(entry.blockId)
 }
 
 function hashColor(s: string): string {

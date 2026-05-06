@@ -1,113 +1,67 @@
 import type { BlockEntry, Blueprint, BlueprintRoom, TemplateModule, Vec3 } from './types.js'
 import { deduplicateBlocks, computeMaterialList, carveOpening } from './voxelOps.js'
 import { v4 as uuidv4 } from 'uuid'
+import { resolveBlock, stairsForBase, UTILITY_GAP_BLOCK_ID, type ResolvedBlock } from './blockRegistry.js'
 
-// Marker block used for utility-gap layers. Real Minecraft block (invisible
-// in-game), so the existing exporter and renderer don't need changes.
-export const UTILITY_GAP_MARKER = 'minecraft:structure_void'
+// Marker block placed in utility-gap layers between vertically-stacked rooms.
+// minecraft:smooth_stone_slab (bottom half) is visually distinct in both the
+// renderer and in-game.
+export const UTILITY_GAP_MARKER = UTILITY_GAP_BLOCK_ID
 
 const MIN_INNER_HEIGHT = 4
 
-// ─── Palette resolution ──────────────────────────────────────────────────────
+// ─── Palette resolution (delegates to blockRegistry) ─────────────────────────
 
-const PALETTE_RESOLVER: Record<string, string> = {
-  // Stones
-  stone:                  'minecraft:stone',
-  stone_brick:            'minecraft:stone_bricks',
-  stone_bricks:           'minecraft:stone_bricks',
-  cobblestone:            'minecraft:cobblestone',
-  smooth_stone:           'minecraft:smooth_stone',
-  mossy_stone_brick:      'minecraft:mossy_stone_bricks',
-  polished_andesite:      'minecraft:polished_andesite',
-  polished_diorite:       'minecraft:polished_diorite',
-  polished_granite:       'minecraft:polished_granite',
-  polished_blackstone:    'minecraft:polished_blackstone',
-  blackstone:             'minecraft:blackstone',
-  deepslate:              'minecraft:deepslate',
-  polished_deepslate:     'minecraft:polished_deepslate',
-  deepslate_bricks:       'minecraft:deepslate_bricks',
-  deepslate_tiles:        'minecraft:deepslate_tiles',
-  // End / Nether
-  end_stone:              'minecraft:end_stone',
-  end_stone_bricks:       'minecraft:end_stone_bricks',
-  purpur:                 'minecraft:purpur_block',
-  purpur_block:           'minecraft:purpur_block',
-  nether_brick:           'minecraft:nether_bricks',
-  nether_bricks:          'minecraft:nether_bricks',
-  // Quartz
-  quartz:                 'minecraft:quartz_block',
-  quartz_block:           'minecraft:quartz_block',
-  smooth_quartz:          'minecraft:smooth_quartz',
-  // Concrete
-  white_concrete:         'minecraft:white_concrete',
-  light_gray_concrete:    'minecraft:light_gray_concrete',
-  gray_concrete:          'minecraft:gray_concrete',
-  black_concrete:         'minecraft:black_concrete',
-  cyan_concrete:          'minecraft:cyan_concrete',
-  orange_concrete:        'minecraft:orange_concrete',
-  // Wood
-  oak_planks:             'minecraft:oak_planks',
-  oak_log:                'minecraft:oak_log',
-  spruce_planks:          'minecraft:spruce_planks',
-  spruce_log:             'minecraft:spruce_log',
-  dark_oak_planks:        'minecraft:dark_oak_planks',
-  dark_oak_log:           'minecraft:dark_oak_log',
-  // Metals / functional
-  iron_block:             'minecraft:iron_block',
-  iron_bars:              'minecraft:iron_bars',
-  glass:                  'minecraft:glass',
-  // Lights
-  glowstone:              'minecraft:glowstone',
-  sea_lantern:            'minecraft:sea_lantern',
-  shroomlight:            'minecraft:shroomlight',
-  lantern:                'minecraft:lantern',
-}
-
+/**
+ * Back-compat helper used elsewhere (tests, server). Returns just the block ID.
+ */
 export function resolveMaterial(abstract: string, fallback = 'minecraft:stone_bricks'): string {
   if (!abstract) return fallback
-  if (abstract.includes(':')) return abstract              // already namespaced
-  const key = abstract.toLowerCase().trim().replace(/[\s-]+/g, '_')
-  if (PALETTE_RESOLVER[key]) return PALETTE_RESOLVER[key]
-  // Heuristic fallback: assume vanilla block id
-  return `minecraft:${key}`
+  return resolveBlock(abstract).blockId
 }
 
 interface ResolvedPalette {
-  wall: string
-  secondaryWall: string
-  floor: string
-  ceiling: string
-  accent: string
-  frame: string
-  light: string
+  wall:           ResolvedBlock
+  secondaryWall:  ResolvedBlock
+  floor:          ResolvedBlock
+  ceiling:        ResolvedBlock
+  accent:         ResolvedBlock
+  frame:          ResolvedBlock          // base material for framed pillars
+  framedPillar:   ResolvedBlock          // resolved framed_<frame> block
+  light:          ResolvedBlock
 }
 
 function resolvePalette(bp: Blueprint): ResolvedPalette {
   const p = bp.material_palette
+  const frame = resolveBlock(p.frame_material)
+  const framedPillar = resolveBlock(`framed_${p.frame_material}`)
   return {
-    wall:          resolveMaterial(p.primary_wall, 'minecraft:stone_bricks'),
-    secondaryWall: resolveMaterial(p.secondary_wall, 'minecraft:stone_bricks'),
-    floor:         resolveMaterial(p.floor, 'minecraft:smooth_stone'),
-    ceiling:       resolveMaterial(p.ceiling, 'minecraft:stone_bricks'),
-    accent:        resolveMaterial(p.accent, 'minecraft:polished_andesite'),
-    frame:         resolveMaterial(p.frame_material, 'minecraft:oak_log'),
-    light:         'minecraft:sea_lantern',
+    wall:           resolveBlock(p.primary_wall),
+    secondaryWall:  resolveBlock(p.secondary_wall),
+    floor:          resolveBlock(p.floor),
+    ceiling:        resolveBlock(p.ceiling),
+    accent:         resolveBlock(p.accent),
+    frame,
+    framedPillar,
+    light:          resolveBlock('sea_lantern'),
   }
+}
+
+function place(blocks: BlockEntry[], x: number, y: number, z: number, rb: ResolvedBlock) {
+  const entry: BlockEntry = { x, y, z, blockId: rb.blockId, blockState: { ...rb.blockState } }
+  if (rb.nbtData) entry.nbtData = rb.nbtData
+  blocks.push(entry)
 }
 
 // ─── Geometry helpers ────────────────────────────────────────────────────────
 
 interface RoomBox {
   room: BlueprintRoom
-  innerSize: Vec3   // enforced inner dimensions (≥ MIN_INNER_HEIGHT for y)
-  origin: Vec3      // outer min corner (one below floor's interior)
-  outerMax: Vec3    // outer max corner
+  innerSize: Vec3
+  origin: Vec3       // outer min corner
+  outerMax: Vec3     // outer max corner
 }
 
-/**
- * Compute outer footprint of a room. Outer = inner + 2 in each axis (walls/floor/ceiling).
- * The room.position represents the outer min corner.
- */
 function computeBox(room: BlueprintRoom): RoomBox {
   const innerY = Math.max(MIN_INNER_HEIGHT, Math.floor(room.size.y))
   const innerX = Math.max(1, Math.floor(room.size.x))
@@ -135,38 +89,35 @@ function buildRoomShell(box: RoomBox, pal: ResolvedPalette): BlockEntry[] {
         const isFloor   = y === origin.y
         const isCeiling = y === outerMax.y
         const isWall    = (x === origin.x || x === outerMax.x || z === origin.z || z === outerMax.z) && !isFloor && !isCeiling
-        if (isFloor) {
-          blocks.push({ x, y, z, blockId: pal.floor, blockState: {} })
-        } else if (isCeiling) {
-          blocks.push({ x, y, z, blockId: pal.ceiling, blockState: {} })
-        } else if (isWall) {
-          blocks.push({ x, y, z, blockId: pal.wall, blockState: {} })
-        }
+        if (isFloor)        place(blocks, x, y, z, pal.floor)
+        else if (isCeiling) place(blocks, x, y, z, pal.ceiling)
+        else if (isWall)    place(blocks, x, y, z, pal.wall)
       }
     }
   }
 
-  // Lights at quarter / mid points on the ceiling for ambient illumination
+  // Center ceiling light
   const innerCx = origin.x + Math.floor((box.innerSize.x + 1) / 2)
   const innerCz = origin.z + Math.floor((box.innerSize.z + 1) / 2)
-  const ceilingY = outerMax.y - 1
-  blocks.push({ x: innerCx, y: ceilingY, z: innerCz, blockId: pal.light, blockState: {} })
+  place(blocks, innerCx, outerMax.y - 1, innerCz, pal.light)
 
-  // Apply features
+  // Apply per-room features
   const features = new Set(box.room.features.map(f => f.toLowerCase()))
   if (features.has('support_pillars') || features.has('pillars')) {
-    addCornerPillars(blocks, box, pal.accent)
+    addCornerPillars(blocks, box, pal.framedPillar)
   }
   if (features.has('arched_ceiling') || features.has('vaulted_ceiling')) {
-    addCeilingRibs(blocks, box, pal.accent)
+    addArchedCeiling(blocks, box, pal)
   }
   if (features.has('large_windows') || features.has('windows')) {
-    addWindows(blocks, box, 'minecraft:glass')
+    addLargeWindows(blocks, box)
   }
   return blocks
 }
 
-function addCornerPillars(blocks: BlockEntry[], box: RoomBox, accent: string) {
+// ── Feature: support_pillars (framed-block 1×1 corner pillars) ───────────────
+
+function addCornerPillars(blocks: BlockEntry[], box: RoomBox, framed: ResolvedBlock) {
   const { origin, outerMax } = box
   const corners: [number, number][] = [
     [origin.x + 1, origin.z + 1],
@@ -176,33 +127,69 @@ function addCornerPillars(blocks: BlockEntry[], box: RoomBox, accent: string) {
   ]
   for (const [x, z] of corners) {
     for (let y = origin.y + 1; y < outerMax.y; y++) {
-      blocks.push({ x, y, z, blockId: accent, blockState: {} })
+      place(blocks, x, y, z, framed)
     }
   }
 }
 
-function addCeilingRibs(blocks: BlockEntry[], box: RoomBox, accent: string) {
+// ── Feature: arched_ceiling (stairs along ceiling edges, half=top) ───────────
+
+function addArchedCeiling(blocks: BlockEntry[], box: RoomBox, pal: ResolvedPalette) {
   const { origin, outerMax } = box
-  const ribY = outerMax.y - 1
-  for (let z = origin.z + 2; z < outerMax.z - 1; z += 3) {
-    for (let x = origin.x + 1; x < outerMax.x; x++) {
-      blocks.push({ x, y: ribY, z, blockId: accent, blockState: {} })
+  const ceilingY = outerMax.y - 1
+  const stairsId = stairsForBase(pal.ceiling.blockId) ?? stairsForBase(pal.wall.blockId)
+
+  if (!stairsId) {
+    // Fallback: solid framed-block ribs across the ceiling
+    for (let z = origin.z + 2; z < outerMax.z - 1; z += 3) {
+      for (let x = origin.x + 1; x < outerMax.x; x++) {
+        place(blocks, x, ceilingY, z, pal.framedPillar)
+      }
     }
+    return
+  }
+
+  const stair = (facing: string): ResolvedBlock => ({
+    blockId: stairsId,
+    blockState: { facing, half: 'top', shape: 'straight', waterlogged: 'false' },
+  })
+
+  // Inner ring at y = ceilingY - 1, stairs facing inward, half=top → arch beveling
+  const archY = ceilingY - 1
+  for (let x = origin.x + 1; x < outerMax.x; x++) {
+    place(blocks, x, archY, origin.z + 1,    stair('south'))
+    place(blocks, x, archY, outerMax.z - 1,  stair('north'))
+  }
+  for (let z = origin.z + 2; z < outerMax.z - 1; z++) {
+    place(blocks, origin.x + 1,    archY, z, stair('east'))
+    place(blocks, outerMax.x - 1,  archY, z, stair('west'))
   }
 }
 
-function addWindows(blocks: BlockEntry[], box: RoomBox, glass: string) {
+// ── Feature: large_windows (every 3rd wall column, glass at y+1 and y+2) ─────
+
+function addLargeWindows(blocks: BlockEntry[], box: RoomBox) {
   const { origin, outerMax } = box
-  const midY = origin.y + Math.floor(box.innerSize.y / 2) + 1
-  // North and south walls
-  for (let x = origin.x + 2; x < outerMax.x - 1; x += 2) {
-    blocks.push({ x, y: midY, z: origin.z,    blockId: glass, blockState: {} })
-    blocks.push({ x, y: midY, z: outerMax.z, blockId: glass, blockState: {} })
+  const glass: ResolvedBlock = { blockId: 'minecraft:glass', blockState: {} }
+  const yLo = origin.y + 1
+  const yHi = origin.y + 2
+  if (yHi >= outerMax.y) return // need at least 3 inner blocks of vertical clearance
+
+  // North/south walls
+  for (let x = origin.x + 1; x < outerMax.x; x++) {
+    if (((x - origin.x) % 3) !== 0) continue
+    place(blocks, x, yLo, origin.z,    glass)
+    place(blocks, x, yHi, origin.z,    glass)
+    place(blocks, x, yLo, outerMax.z,  glass)
+    place(blocks, x, yHi, outerMax.z,  glass)
   }
-  // East and west walls
-  for (let z = origin.z + 2; z < outerMax.z - 1; z += 2) {
-    blocks.push({ x: origin.x,    y: midY, z, blockId: glass, blockState: {} })
-    blocks.push({ x: outerMax.x, y: midY, z, blockId: glass, blockState: {} })
+  // East/west walls
+  for (let z = origin.z + 1; z < outerMax.z; z++) {
+    if (((z - origin.z) % 3) !== 0) continue
+    place(blocks, origin.x,   yLo, z, glass)
+    place(blocks, origin.x,   yHi, z, glass)
+    place(blocks, outerMax.x, yLo, z, glass)
+    place(blocks, outerMax.x, yHi, z, glass)
   }
 }
 
@@ -210,18 +197,16 @@ function addWindows(blocks: BlockEntry[], box: RoomBox, glass: string) {
 
 interface SharedWall {
   axis: 'x' | 'z'
-  plane: number       // x or z coordinate of the wall
+  plane: number
   yMin: number
-  span: { min: number; max: number }   // overlap on the other horizontal axis
+  span: { min: number; max: number }
 }
 
 function findSharedWall(a: RoomBox, b: RoomBox): SharedWall | null {
-  // Vertical span overlap required
   const yMin = Math.max(a.origin.y, b.origin.y)
   const yMax = Math.min(a.outerMax.y, b.outerMax.y)
   if (yMax - yMin < 3) return null
 
-  // X-aligned wall: a's east wall touches b's west wall (or vice versa) on plane = a.outerMax.x == b.origin.x
   if (a.outerMax.x === b.origin.x || b.outerMax.x === a.origin.x) {
     const plane = a.outerMax.x === b.origin.x ? a.outerMax.x : b.outerMax.x
     const zMin = Math.max(a.origin.z, b.origin.z) + 1
@@ -229,7 +214,6 @@ function findSharedWall(a: RoomBox, b: RoomBox): SharedWall | null {
     if (zMax - zMin < 1) return null
     return { axis: 'x', plane, yMin, span: { min: zMin, max: zMax } }
   }
-  // Z-aligned wall
   if (a.outerMax.z === b.origin.z || b.outerMax.z === a.origin.z) {
     const plane = a.outerMax.z === b.origin.z ? a.outerMax.z : b.outerMax.z
     const xMin = Math.max(a.origin.x, b.origin.x) + 1
@@ -255,10 +239,6 @@ function carveDoorway(blocks: BlockEntry[], wall: SharedWall): BlockEntry[] {
 
 // ─── Utility gap layers ──────────────────────────────────────────────────────
 
-/**
- * Insert a 1-block-tall structure_void layer between vertically adjacent rooms
- * (where one room's ceiling touches another's floor).
- */
 function insertUtilityGaps(blocks: BlockEntry[], boxes: RoomBox[]): BlockEntry[] {
   const sorted = [...boxes].sort((a, b) => a.origin.y - b.origin.y)
   const out = [...blocks]
@@ -266,21 +246,20 @@ function insertUtilityGaps(blocks: BlockEntry[], boxes: RoomBox[]): BlockEntry[]
     for (let j = i + 1; j < sorted.length; j++) {
       const lower = sorted[i]
       const upper = sorted[j]
-      // Only fire when upper sits directly atop lower (ceiling-y == floor-y)
       if (upper.origin.y !== lower.outerMax.y) continue
       const overlapXmin = Math.max(lower.origin.x, upper.origin.x)
       const overlapXmax = Math.min(lower.outerMax.x, upper.outerMax.x)
       const overlapZmin = Math.max(lower.origin.z, upper.origin.z)
       const overlapZmax = Math.min(lower.outerMax.z, upper.outerMax.z)
       if (overlapXmax <= overlapXmin || overlapZmax <= overlapZmin) continue
-      // Push the upper room up by 1 (already done at room creation? No — we
-      // overwrite the shared layer with markers since position is taken as-is).
-      // Strategy: replace shared y plane (== upper.origin.y == lower.outerMax.y)
-      // *interior* footprint with utility marker blocks.
       const y = lower.outerMax.y
       for (let x = overlapXmin + 1; x < overlapXmax; x++) {
         for (let z = overlapZmin + 1; z < overlapZmax; z++) {
-          out.push({ x, y, z, blockId: UTILITY_GAP_MARKER, blockState: { utility: 'true' } })
+          out.push({
+            x, y, z,
+            blockId: UTILITY_GAP_MARKER,
+            blockState: { type: 'bottom', waterlogged: 'false', utility: 'true' },
+          })
         }
       }
     }
@@ -305,7 +284,6 @@ export function layoutBlueprint(blueprint: Blueprint): LayoutResult {
     blocks = blocks.concat(buildRoomShell(box, pal))
   }
 
-  // Carve doorways for connects_to (each pair only once)
   const seen = new Set<string>()
   const byId = new Map(boxes.map(b => [b.room.id, b]))
   for (const a of boxes) {
@@ -326,7 +304,6 @@ export function layoutBlueprint(blueprint: Blueprint): LayoutResult {
 
   blocks = deduplicateBlocks(blocks)
 
-  // Normalize so min corner is at (0,0,0)
   let minX = Infinity, minY = Infinity, minZ = Infinity
   let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity
   for (const b of blocks) {

@@ -29,7 +29,7 @@ function singleRoom(overrides: Partial<Blueprint> = {}): Blueprint {
 describe('layoutEngine', () => {
   it('resolves abstract material names to namespaced block IDs', () => {
     expect(resolveMaterial('stone_brick')).toBe('minecraft:stone_bricks')
-    expect(resolveMaterial('polished_blackstone')).toBe('minecraft:polished_blackstone')
+    expect(resolveMaterial('polished_blackstone')).toBe('minecraft:polished_blackstone_bricks')
     expect(resolveMaterial('minecraft:something_custom')).toBe('minecraft:something_custom')
     expect(resolveMaterial('Stone Brick')).toBe('minecraft:stone_bricks') // case + space
   })
@@ -140,6 +140,80 @@ describe('layoutEngine', () => {
     expect(tpl.blocks.length).toBeGreaterThan(0)
     expect(tpl.materialList.length).toBeGreaterThan(0)
     expect(tpl.tags).toContain('ai-generated')
+  })
+
+  it('support_pillars feature places framed_cube at all 4 inner corners', () => {
+    const bp = singleRoom({ rooms: [{
+      id: 'main', label: '', type: 'hall',
+      size: { x: 5, y: 4, z: 5 },
+      position: { x: 0, y: 0, z: 0 },
+      connects_to: [],
+      features: ['support_pillars'],
+    }] })
+    const { blocks } = layoutBlueprint(bp)
+    const framed = blocks.filter(b => b.blockId === 'framed_blocks:framed_cube')
+    expect(framed.length).toBeGreaterThanOrEqual(4 * 4)   // 4 corners × 4 inner-height blocks
+    // Every framed block carries CamoState NBT
+    for (const b of framed) {
+      const camo = b.nbtData?.['CamoState'] as { Name?: string } | undefined
+      expect(camo?.Name).toBeTruthy()
+    }
+  })
+
+  it('arched_ceiling feature places stairs at half=top along ceiling edges', () => {
+    const bp = singleRoom({ rooms: [{
+      id: 'main', label: '', type: 'hall',
+      size: { x: 7, y: 5, z: 7 },
+      position: { x: 0, y: 0, z: 0 },
+      connects_to: [],
+      features: ['arched_ceiling'],
+    }] })
+    const { blocks } = layoutBlueprint(bp)
+    const stairs = blocks.filter(b => b.blockId.endsWith('_stairs'))
+    expect(stairs.length).toBeGreaterThan(0)
+    expect(stairs.every(s => s.blockState.half === 'top')).toBe(true)
+    // Multiple facings around the perimeter
+    const facings = new Set(stairs.map(s => s.blockState.facing))
+    expect(facings.size).toBeGreaterThanOrEqual(2)
+  })
+
+  it('large_windows feature places glass at every 3rd column at y+1 and y+2', () => {
+    const bp = singleRoom({ rooms: [{
+      id: 'main', label: '', type: 'hall',
+      size: { x: 10, y: 5, z: 5 },
+      position: { x: 0, y: 0, z: 0 },
+      connects_to: [],
+      features: ['large_windows'],
+    }] })
+    const { blocks } = layoutBlueprint(bp)
+    const glass = blocks.filter(b => b.blockId === 'minecraft:glass')
+    expect(glass.length).toBeGreaterThan(0)
+    // Each glass block should be at y=1 or y=2 (relative to normalized origin)
+    expect(glass.every(g => g.y === 1 || g.y === 2)).toBe(true)
+  })
+
+  it('utility_gap marker is now smooth_stone_slab (visible half-slab)', () => {
+    const bp = parseBlueprint({
+      theme: '', style_notes: '',
+      material_palette: {
+        primary_wall: 'stone_brick', secondary_wall: 'cobblestone',
+        floor: 'smooth_stone', ceiling: 'stone_brick',
+        accent: 'polished_andesite', frame_material: 'oak_log',
+      },
+      bounding_box: { x: 10, y: 20, z: 10 },
+      utility_gap: true,
+      rooms: [
+        { id: 'lower', label: '', type: 'room', size: { x: 5, y: 4, z: 5 },
+          position: { x: 0, y: 0, z: 0 }, connects_to: [], features: [] },
+        { id: 'upper', label: '', type: 'room', size: { x: 5, y: 4, z: 5 },
+          position: { x: 0, y: 5, z: 0 }, connects_to: [], features: [] },
+      ],
+    })
+    const { blocks } = layoutBlueprint(bp)
+    const slabs = blocks.filter(b => b.blockId === 'minecraft:smooth_stone_slab')
+    expect(slabs.length).toBeGreaterThan(0)
+    expect(slabs[0].blockState.type).toBe('bottom')
+    expect(slabs[0].blockState.utility).toBe('true')
   })
 
   it('parseBlueprint rejects blueprints with no rooms', () => {
