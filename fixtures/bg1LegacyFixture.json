@@ -1,0 +1,17 @@
+{
+  "_comment": "This is a SYNTHETIC fixture that mimics the BG1 legacy format based on validated community examples.",
+  "_warning": "This fixture was NOT exported from a real Building Gadgets Template Manager. Its NBT body is a known-good encoded structure for testing the round-trip pipeline only. Replace with a real in-game exported template to validate production compatibility.",
+  "_format": "bg1_legacy",
+  "_source": "Synthetic fixture generated for BG Modular Base Planner round-trip tests",
+  "_todoValidate": "TODO: Export a real template from the Template Manager block in-game. Paste the resulting JSON here to replace this synthetic fixture.",
+  "header": {
+    "material_list": {
+      "root_entry": [
+        { "count": 16, "item": { "id": "minecraft:stone_bricks" } },
+        { "count": 4, "item": { "id": "minecraft:smooth_stone" } },
+        { "count": 1, "item": { "id": "minecraft:sea_lantern" } }
+      ]
+    }
+  },
+  "body": "__PLACEHOLDER__"
+}
