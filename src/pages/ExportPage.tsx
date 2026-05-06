@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom'
 import { api } from '../store/api.ts'
 import { useAppStore } from '../store/appStore.ts'
 import type { TemplateModule, ValidationReport } from '@shared/types.js'
+import { exportToCreateSchematic } from '@shared/createSchematicExport.js'
 
 export default function ExportPage() {
   const { id } = useParams()
@@ -16,6 +17,7 @@ export default function ExportPage() {
   const [roundTripResult, setRoundTripResult] = useState<{ success: boolean; errors: string[]; warnings: string[] } | null>(null)
   const [error, setError] = useState('')
   const [copied, setCopied] = useState(false)
+  const [creatingNbt, setCreatingNbt] = useState(false)
 
   useEffect(() => {
     if (id) {
@@ -64,6 +66,27 @@ export default function ExportPage() {
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
     })
+  }
+
+  async function downloadCreateNbt() {
+    if (!template) return
+    setCreatingNbt(true)
+    setError('')
+    try {
+      const { raw } = await exportToCreateSchematic(template.blocks)
+      const blob = new Blob([raw as BlobPart], { type: 'application/octet-stream' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      const safeName = template.name.replace(/\s+/g, '_').replace(/[^\w.-]/g, '') || 'structure'
+      a.download = `${safeName}.nbt`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (e) {
+      setError(`Create schematic export failed: ${String(e)}`)
+    } finally {
+      setCreatingNbt(false)
+    }
   }
 
   function downloadFile() {
@@ -221,6 +244,16 @@ export default function ExportPage() {
                 className="w-full py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm rounded">
                 {exporting ? 'Exporting...' : `Export as ${exportFormat === 'bg1_legacy' ? 'Building Gadgets 1 JSON' : 'Internal JSON'}`}
               </button>
+
+              <div className="mt-3 pt-3 border-t border-gray-700">
+                <div className="text-xs text-gray-400 mb-2">
+                  Create mod / vanilla structure block format. Gzipped NBT, downloads as <code className="text-gray-300">.nbt</code>.
+                </div>
+                <button onClick={downloadCreateNbt} disabled={creatingNbt}
+                  className="w-full py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-sm rounded">
+                  {creatingNbt ? 'Building NBT...' : 'Download Create Schematic (.nbt)'}
+                </button>
+              </div>
             </div>
 
             {exportData && (
