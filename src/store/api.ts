@@ -1,6 +1,7 @@
 import type {
   Project, TemplateModule, CreateProjectRequest,
-  GenerateModuleRequest, ExportTemplateRequest, ValidationReport
+  GenerateModuleRequest, ExportTemplateRequest, ValidationReport,
+  Blueprint, DesignBrainRequest, BuildFromBlueprintRequest,
 } from '@shared/types.js'
 
 const BASE = '/api'
@@ -38,6 +39,10 @@ export const api = {
     delete: (id: string) => req<void>(`/templates/${id}`, { method: 'DELETE' }),
     generate: (body: GenerateModuleRequest) =>
       req<TemplateModule>('/templates/generate', { method: 'POST', body: JSON.stringify(body) }),
+    design: (body: DesignBrainRequest) =>
+      req<{ blueprint: Blueprint }>('/templates/design', { method: 'POST', body: JSON.stringify(body) }),
+    build: (body: BuildFromBlueprintRequest) =>
+      req<TemplateModule>('/templates/build', { method: 'POST', body: JSON.stringify(body) }),
     export: (id: string, body: Partial<ExportTemplateRequest>) =>
       req<{ format: string; data: string }>(`/templates/${id}/export`, { method: 'POST', body: JSON.stringify(body) }),
     import: (raw: unknown, projectId: string, name?: string) =>

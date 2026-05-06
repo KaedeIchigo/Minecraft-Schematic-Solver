@@ -201,6 +201,53 @@ export interface ExportTemplateRequest {
   format: 'bg1_legacy' | 'bg2' | 'internal_json'
 }
 
+// ---- Design Brain Blueprint (AI-driven generation layer) -----------------
+
+export type BlueprintRoomType =
+  | 'hall' | 'room' | 'corridor' | 'stairwell' | 'utility'
+
+export interface BlueprintRoom {
+  id: string
+  label: string
+  type: BlueprintRoomType | string
+  size: Vec3                         // inner dimensions (interior only)
+  position: Vec3                     // relative to structure origin (min corner of room footprint)
+  connects_to: string[]
+  features: string[]
+}
+
+export interface BlueprintMaterialPalette {
+  primary_wall: string
+  secondary_wall: string
+  floor: string
+  ceiling: string
+  accent: string
+  frame_material: string
+}
+
+export interface Blueprint {
+  theme: string
+  style_notes: string
+  material_palette: BlueprintMaterialPalette
+  bounding_box: Vec3
+  utility_gap: boolean
+  rooms: BlueprintRoom[]
+}
+
+export interface DesignBrainRequest {
+  prompt: string
+  imageBase64?: string             // optional reference image (data URL or raw base64)
+  apiKey?: string                  // optional override; falls back to OPENROUTER_API_KEY env
+  model?: string                   // optional model override
+}
+
+export interface BuildFromBlueprintRequest {
+  projectId: string
+  blueprint: Blueprint
+  prompt?: string
+  sourceImage?: string             // data URL retained for provenance
+}
+
 export interface ValidationReport {
   valid: boolean
   format: BuildingGadgetsVersion | 'internal'

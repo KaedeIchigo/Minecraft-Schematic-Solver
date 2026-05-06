@@ -7,7 +7,13 @@ import { exportTemplate, importTemplate, validateTemplate, roundTripTemplate, ge
 import { generateModuleFromBrief } from '../../shared/moduleGenerator.js'
 import { computeMaterialList } from '../../shared/voxelOps.js'
 import { detectVersion } from '../adapters/buildingGadgets/detectVersion.js'
-import type { GenerateModuleRequest, ExportTemplateRequest } from '@shared/types.js'
+import type {
+  GenerateModuleRequest, ExportTemplateRequest,
+  DesignBrainRequest, BuildFromBlueprintRequest,
+} from '@shared/types.js'
+import { callDesignBrain } from '../services/designBrain.js'
+import { blueprintToTemplate } from '../../shared/layoutEngine.js'
+import { parseBlueprint } from '../../shared/blueprintSchema.js'
 
 const router = Router()
 
@@ -50,6 +56,42 @@ router.delete('/:id', (req, res) => {
   const ok = deleteTemplate(req.params.id)
   if (!ok) return res.status(404).json({ error: 'Template not found' })
   res.status(204).end()
+})
+
+// Design Brain: prompt (+ optional reference image) → Blueprint JSON via OpenRouter
+router.post('/design', async (req, res) => {
+  try {
+    const body = req.body as DesignBrainRequest
+    if (!body.prompt || typeof body.prompt !== 'string') {
+      return res.status(400).json({ error: 'prompt is required' })
+    }
+    const blueprint = await callDesignBrain({
+      prompt: body.prompt,
+      imageBase64: body.imageBase64,
+      apiKey: body.apiKey,
+      model: body.model,
+    })
+    res.json({ blueprint })
+  } catch (e) {
+    res.status(500).json({ error: String((e as Error).message ?? e) })
+  }
+})
+
+// Layout Engine: Blueprint → TemplateModule (saved to DB)
+router.post('/build', async (req, res) => {
+  try {
+    const body = req.body as BuildFromBlueprintRequest
+    if (!body.projectId || !body.blueprint) {
+      return res.status(400).json({ error: 'projectId and blueprint required' })
+    }
+    // Re-validate (the client may have edited the blueprint)
+    const blueprint = parseBlueprint(body.blueprint)
+    const moduleData = blueprintToTemplate(blueprint, body.projectId, body.prompt, body.sourceImage)
+    const saved = createTemplate(moduleData)
+    res.status(201).json(saved)
+  } catch (e) {
+    res.status(500).json({ error: String((e as Error).message ?? e) })
+  }
 })
 
 // Generate a module from a design brief

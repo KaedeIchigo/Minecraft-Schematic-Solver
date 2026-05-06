@@ -1,105 +1,135 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../store/api.ts'
 import { useAppStore } from '../store/appStore.ts'
-import type { DesignBrief, ModuleType, Facing, RoofStyle, FloorPattern, Symmetry } from '@shared/types.js'
+import type { Blueprint } from '@shared/types.js'
 
-const MODULE_TYPES: ModuleType[] = [
-  'starter_room', 'machine_room', 'hallway', 'elevator', 'ae2_room',
-  'mekanism_room', 'mystical_ag_room', 'power_room', 'platform', 'bridge', 'tower', 'custom'
-]
-const FACINGS: Facing[] = ['north', 'south', 'east', 'west']
-const ROOF_STYLES: RoofStyle[] = ['flat', 'slanted', 'dome', 'none']
-const FLOOR_PATTERNS: FloorPattern[] = ['plain', 'checkerboard', 'diagonal', 'bordered', 'mixed']
-const SYMMETRIES: Symmetry[] = ['none', 'x', 'z', 'both', 'radial']
-const STYLE_PRESETS: Record<string, string[]> = {
-  'Tech base': ['tech', 'industrial', 'dark'],
-  'AE2 room': ['tech', 'clean', 'white-lab'],
-  'Mekanism factory': ['factory', 'industrial', 'gray'],
-  'Mystical AG': ['nature', 'organic', 'farming'],
-  'Magic room': ['magic', 'mystical', 'purple'],
-  'Neutral hallway': ['neutral', 'compact'],
-  'Glass observation': ['glass-heavy', 'bright', 'open'],
-  'Dark industrial': ['dark', 'industrial', 'dark-industrial'],
-}
-
-const DEFAULT_BRIEF: DesignBrief = {
-  intendedModuleType: 'machine_room',
-  dimensions: { x: 17, y: 9, z: 17 },
-  styleKeywords: ['tech', 'industrial'],
-  blockPalette: [],
-  requiredFunctionalSpaces: [],
-  forbiddenBlocks: [],
-  symmetry: 'both',
-  entranceDirections: ['north'],
-  interiorClearance: 4,
-  decorativeDensity: 0.3,
-  lightingStyle: 'standard',
-  roofStyle: 'flat',
-  floorPattern: 'plain',
-  wallPattern: 'plain',
-  connectionPorts: [],
-  notes: '',
-}
+const API_KEY_STORAGE = 'openrouter_api_key'
+const MODEL_STORAGE   = 'openrouter_model'
 
 export default function Generator() {
   const navigate = useNavigate()
   const { activeProject, addTemplate } = useAppStore()
+
   const [prompt, setPrompt] = useState('')
-  const [brief, setBrief] = useState<DesignBrief>({ ...DEFAULT_BRIEF })
-  const [generating, setGenerating] = useState(false)
+  const [imageDataUrl, setImageDataUrl] = useState<string | null>(null)
+  const [blueprint, setBlueprint] = useState<Blueprint | null>(null)
+  const [blueprintExpanded, setBlueprintExpanded] = useState(true)
+  const [designing, setDesigning] = useState(false)
+  const [building, setBuilding] = useState(false)
   const [error, setError] = useState('')
   const [generated, setGenerated] = useState<string | null>(null)
+  const [showSettings, setShowSettings] = useState(false)
+  const [apiKey, setApiKey] = useState(() => localStorage.getItem(API_KEY_STORAGE) ?? '')
+  const [model, setModel] = useState(() => localStorage.getItem(MODEL_STORAGE) ?? '')
+  const [dragOver, setDragOver] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
-  function updateBrief<K extends keyof DesignBrief>(key: K, value: DesignBrief[K]) {
-    setBrief(b => ({ ...b, [key]: value }))
+  function saveSettings() {
+    if (apiKey) localStorage.setItem(API_KEY_STORAGE, apiKey)
+    else localStorage.removeItem(API_KEY_STORAGE)
+    if (model) localStorage.setItem(MODEL_STORAGE, model)
+    else localStorage.removeItem(MODEL_STORAGE)
+    setShowSettings(false)
   }
 
-  function applyStylePreset(preset: string) {
-    const keywords = STYLE_PRESETS[preset] ?? []
-    updateBrief('styleKeywords', keywords)
-  }
-
-  function applyQuickPreset(type: ModuleType) {
-    const presets: Partial<Record<ModuleType, Partial<DesignBrief>>> = {
-      starter_room: { dimensions: { x: 9, y: 6, z: 9 }, intendedModuleType: 'starter_room', symmetry: 'both', entranceDirections: ['north'] },
-      machine_room: { dimensions: { x: 17, y: 9, z: 17 }, intendedModuleType: 'machine_room', symmetry: 'both', entranceDirections: ['north', 'south'] },
-      hallway: { dimensions: { x: 5, y: 5, z: 17 }, intendedModuleType: 'hallway', symmetry: 'z', entranceDirections: ['north', 'south'] },
-      elevator: { dimensions: { x: 5, y: 20, z: 5 }, intendedModuleType: 'elevator', symmetry: 'both', entranceDirections: ['north'] },
-      ae2_room: { dimensions: { x: 13, y: 7, z: 13 }, intendedModuleType: 'ae2_room', symmetry: 'both', styleKeywords: ['tech', 'clean', 'ae2'], entranceDirections: ['north'] },
+  function handleImageFile(file: File) {
+    if (!file.type.startsWith('image/')) {
+      setError('Dropped file is not an image')
+      return
     }
-    const preset = presets[type]
-    if (preset) setBrief(b => ({ ...b, ...preset }))
+    const reader = new FileReader()
+    reader.onload = () => setImageDataUrl(String(reader.result))
+    reader.readAsDataURL(file)
   }
 
-  async function generate() {
-    if (!activeProject) { setError('Select or create a project first'); return }
-    setGenerating(true)
-    setError('')
+  function onDrop(e: React.DragEvent<HTMLDivElement>) {
+    e.preventDefault()
+    setDragOver(false)
+    const file = e.dataTransfer.files?.[0]
+    if (file) handleImageFile(file)
+  }
+
+  async function design() {
+    if (!prompt.trim()) { setError('Please describe your structure first'); return }
+    setDesigning(true); setError(''); setBlueprint(null); setGenerated(null)
     try {
-      const t = await api.templates.generate({ projectId: activeProject.id, designBrief: brief, prompt })
-      addTemplate(t)
-      setGenerated(t.id)
+      const { blueprint } = await api.templates.design({
+        prompt,
+        imageBase64: imageDataUrl ?? undefined,
+        apiKey: apiKey || undefined,
+        model: model || undefined,
+      })
+      setBlueprint(blueprint)
+      setBlueprintExpanded(true)
     } catch (e) {
-      setError(String(e))
+      setError(String((e as Error).message ?? e))
     } finally {
-      setGenerating(false)
+      setDesigning(false)
+    }
+  }
+
+  async function build() {
+    if (!activeProject) { setError('Select or create a project first'); return }
+    if (!blueprint) return
+    setBuilding(true); setError('')
+    try {
+      const tpl = await api.templates.build({
+        projectId: activeProject.id,
+        blueprint,
+        prompt,
+        sourceImage: imageDataUrl ?? undefined,
+      })
+      addTemplate(tpl)
+      setGenerated(tpl.id)
+    } catch (e) {
+      setError(String((e as Error).message ?? e))
+    } finally {
+      setBuilding(false)
     }
   }
 
   return (
     <div className="p-6 space-y-4">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-white">Module Generator</h1>
-        {!activeProject && (
-          <div className="text-yellow-400 text-sm">No active project — go to Dashboard first</div>
-        )}
+        <h1 className="text-2xl font-bold text-white">Design Brain</h1>
+        <div className="flex items-center gap-3">
+          {!activeProject && <div className="text-yellow-400 text-sm">No active project — go to Dashboard first</div>}
+          <button onClick={() => setShowSettings(s => !s)}
+            className="text-xs px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-200 rounded">
+            ⚙ OpenRouter Settings
+          </button>
+        </div>
       </div>
 
-      {error && <div className="bg-red-900 border border-red-700 text-red-200 p-3 rounded text-sm">{error}</div>}
+      {showSettings && (
+        <div className="p-4 rounded-lg space-y-2" style={{ background: '#0d1117', border: '1px solid #21262d' }}>
+          <h2 className="text-sm font-semibold text-gray-300">OpenRouter Settings</h2>
+          <p className="text-xs text-gray-500">
+            Stored in browser localStorage. The server also reads <code>OPENROUTER_API_KEY</code> from <code>.env</code> if no key is provided here.
+          </p>
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">API Key</label>
+            <input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)}
+              placeholder="sk-or-v1-..."
+              className="w-full bg-gray-800 border border-gray-700 text-white text-sm px-2 py-1.5 rounded font-mono" />
+          </div>
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">Model (optional)</label>
+            <input value={model} onChange={e => setModel(e.target.value)}
+              placeholder="google/gemini-flash-1.5 (default)"
+              className="w-full bg-gray-800 border border-gray-700 text-white text-sm px-2 py-1.5 rounded font-mono" />
+          </div>
+          <button onClick={saveSettings} className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded">
+            Save
+          </button>
+        </div>
+      )}
+
+      {error && <div className="bg-red-900 border border-red-700 text-red-200 p-3 rounded text-sm whitespace-pre-wrap">{error}</div>}
       {generated && (
         <div className="bg-green-900 border border-green-700 text-green-200 p-3 rounded text-sm flex items-center justify-between">
-          Module generated!
+          Module built!
           <div className="flex gap-2">
             <button onClick={() => navigate(`/renderer/${generated}`)} className="px-3 py-1 bg-green-700 hover:bg-green-600 rounded text-sm">View in Renderer</button>
             <button onClick={() => navigate(`/export/${generated}`)} className="px-3 py-1 bg-blue-700 hover:bg-blue-600 rounded text-sm">Export</button>
@@ -107,163 +137,135 @@ export default function Generator() {
         </div>
       )}
 
+      {/* Stage 1: prompt + image drop */}
       <div className="grid grid-cols-2 gap-4">
-        {/* Left: Text prompt + quick presets */}
-        <div className="space-y-4">
-          <div className="p-4 rounded-lg" style={{ background: '#0d1117', border: '1px solid #21262d' }}>
-            <h2 className="text-sm font-semibold text-gray-300 mb-2">Text Prompt (optional)</h2>
-            <textarea
-              value={prompt}
-              onChange={e => setPrompt(e.target.value)}
-              placeholder="e.g. 17x17 AE2 room connecting to north hallway, same palette as my Mekanism room, compact layout"
-              rows={4}
-              className="w-full bg-gray-800 border border-gray-700 text-white text-sm px-3 py-2 rounded outline-none focus:border-blue-500 resize-none"
-            />
-          </div>
-
-          <div className="p-4 rounded-lg" style={{ background: '#0d1117', border: '1px solid #21262d' }}>
-            <h2 className="text-sm font-semibold text-gray-300 mb-2">Quick Presets</h2>
-            <div className="flex flex-wrap gap-2">
-              {(['starter_room', 'machine_room', 'hallway', 'elevator', 'ae2_room'] as ModuleType[]).map(t => (
-                <button key={t} onClick={() => applyQuickPreset(t)}
-                  className="text-xs px-2 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-300 rounded">
-                  {t.replace(/_/g, ' ')}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="p-4 rounded-lg" style={{ background: '#0d1117', border: '1px solid #21262d' }}>
-            <h2 className="text-sm font-semibold text-gray-300 mb-2">Style Presets</h2>
-            <div className="flex flex-wrap gap-2">
-              {Object.keys(STYLE_PRESETS).map(name => (
-                <button key={name} onClick={() => applyStylePreset(name)}
-                  className="text-xs px-2 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-300 rounded">
-                  {name}
-                </button>
-              ))}
-            </div>
-          </div>
+        <div className="p-4 rounded-lg" style={{ background: '#0d1117', border: '1px solid #21262d' }}>
+          <h2 className="text-sm font-semibold text-gray-300 mb-2">Describe your structure</h2>
+          <textarea
+            value={prompt}
+            onChange={e => setPrompt(e.target.value)}
+            placeholder="e.g. A 3-floor lunar industrial base with a central reactor hall, surrounding processing rooms, narrow utility corridors, and large reinforced windows. Polished blackstone and structure void aesthetic."
+            rows={8}
+            className="w-full bg-gray-800 border border-gray-700 text-white text-sm px-3 py-2 rounded outline-none focus:border-blue-500 resize-none"
+          />
         </div>
 
-        {/* Right: Design brief */}
-        <div className="p-4 rounded-lg space-y-3 overflow-auto" style={{ background: '#0d1117', border: '1px solid #21262d', maxHeight: '70vh' }}>
-          <h2 className="text-sm font-semibold text-gray-300">Design Brief</h2>
-
-          <Field label="Module Type">
-            <select value={brief.intendedModuleType} onChange={e => updateBrief('intendedModuleType', e.target.value as ModuleType)}
-              className="w-full bg-gray-800 border border-gray-700 text-white text-sm px-2 py-1.5 rounded">
-              {MODULE_TYPES.map(t => <option key={t} value={t}>{t.replace(/_/g, ' ')}</option>)}
-            </select>
-          </Field>
-
-          <div className="grid grid-cols-3 gap-2">
-            {(['x', 'y', 'z'] as const).map(axis => (
-              <Field key={axis} label={`${axis.toUpperCase()} (${axis === 'y' ? 'height' : axis === 'x' ? 'width' : 'depth'})`}>
-                <input type="number" min={3} max={128}
-                  value={brief.dimensions[axis]}
-                  onChange={e => updateBrief('dimensions', { ...brief.dimensions, [axis]: parseInt(e.target.value) || 1 })}
-                  className="w-full bg-gray-800 border border-gray-700 text-white text-sm px-2 py-1.5 rounded" />
-              </Field>
-            ))}
+        <div className="p-4 rounded-lg" style={{ background: '#0d1117', border: '1px solid #21262d' }}>
+          <h2 className="text-sm font-semibold text-gray-300 mb-2">Reference image (optional)</h2>
+          <div
+            onDragOver={e => { e.preventDefault(); setDragOver(true) }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={onDrop}
+            onClick={() => fileInputRef.current?.click()}
+            className={`flex flex-col items-center justify-center h-48 rounded-lg cursor-pointer transition-colors ${
+              dragOver ? 'bg-blue-900 border-blue-500' : 'bg-gray-800 border-gray-700'
+            }`}
+            style={{ border: '2px dashed' }}
+          >
+            {imageDataUrl ? (
+              <img src={imageDataUrl} alt="reference" className="max-h-full max-w-full object-contain rounded" />
+            ) : (
+              <div className="text-center text-gray-400 text-sm">
+                <div className="text-2xl mb-2">📷</div>
+                Drop an image here, or click to upload<br />
+                <span className="text-xs text-gray-500">Sent to the vision model alongside your prompt</span>
+              </div>
+            )}
           </div>
-
-          <Field label="Style Keywords (comma separated)">
-            <input
-              value={brief.styleKeywords.join(', ')}
-              onChange={e => updateBrief('styleKeywords', e.target.value.split(',').map(s => s.trim()).filter(Boolean))}
-              className="w-full bg-gray-800 border border-gray-700 text-white text-sm px-2 py-1.5 rounded" />
-          </Field>
-
-          <Field label="Entrance Directions">
-            <div className="flex gap-2 flex-wrap">
-              {FACINGS.map(f => (
-                <label key={f} className="flex items-center gap-1 text-sm text-gray-300 cursor-pointer">
-                  <input type="checkbox"
-                    checked={brief.entranceDirections.includes(f)}
-                    onChange={e => updateBrief('entranceDirections',
-                      e.target.checked ? [...brief.entranceDirections, f] : brief.entranceDirections.filter(x => x !== f)
-                    )} />
-                  {f}
-                </label>
-              ))}
-            </div>
-          </Field>
-
-          <div className="grid grid-cols-2 gap-2">
-            <Field label="Symmetry">
-              <select value={brief.symmetry} onChange={e => updateBrief('symmetry', e.target.value as Symmetry)}
-                className="w-full bg-gray-800 border border-gray-700 text-white text-sm px-2 py-1.5 rounded">
-                {SYMMETRIES.map(s => <option key={s} value={s}>{s}</option>)}
-              </select>
-            </Field>
-            <Field label="Interior Clearance (blocks)">
-              <input type="number" min={2} max={20} value={brief.interiorClearance}
-                onChange={e => updateBrief('interiorClearance', parseInt(e.target.value) || 4)}
-                className="w-full bg-gray-800 border border-gray-700 text-white text-sm px-2 py-1.5 rounded" />
-            </Field>
-          </div>
-
-          <div className="grid grid-cols-2 gap-2">
-            <Field label="Roof Style">
-              <select value={brief.roofStyle} onChange={e => updateBrief('roofStyle', e.target.value as RoofStyle)}
-                className="w-full bg-gray-800 border border-gray-700 text-white text-sm px-2 py-1.5 rounded">
-                {ROOF_STYLES.map(s => <option key={s} value={s}>{s}</option>)}
-              </select>
-            </Field>
-            <Field label="Floor Pattern">
-              <select value={brief.floorPattern} onChange={e => updateBrief('floorPattern', e.target.value as FloorPattern)}
-                className="w-full bg-gray-800 border border-gray-700 text-white text-sm px-2 py-1.5 rounded">
-                {FLOOR_PATTERNS.map(s => <option key={s} value={s}>{s}</option>)}
-              </select>
-            </Field>
-          </div>
-
-          <Field label="Decorative Density (0–1)">
-            <input type="range" min={0} max={1} step={0.1} value={brief.decorativeDensity}
-              onChange={e => updateBrief('decorativeDensity', parseFloat(e.target.value))}
-              className="w-full" />
-            <span className="text-xs text-gray-400">{brief.decorativeDensity}</span>
-          </Field>
-
-          <Field label="Lighting Style">
-            <select value={brief.lightingStyle} onChange={e => updateBrief('lightingStyle', e.target.value)}
-              className="w-full bg-gray-800 border border-gray-700 text-white text-sm px-2 py-1.5 rounded">
-              <option value="standard">Standard</option>
-              <option value="bright">Bright</option>
-              <option value="dim">Dim</option>
-              <option value="atmospheric">Atmospheric</option>
-            </select>
-          </Field>
-
-          <Field label="Notes">
-            <textarea
-              value={brief.notes}
-              onChange={e => updateBrief('notes', e.target.value)}
-              rows={2}
-              className="w-full bg-gray-800 border border-gray-700 text-white text-sm px-2 py-1.5 rounded resize-none" />
-          </Field>
+          <input ref={fileInputRef} type="file" accept="image/*" className="hidden"
+            onChange={e => { const f = e.target.files?.[0]; if (f) handleImageFile(f) }} />
+          {imageDataUrl && (
+            <button onClick={() => setImageDataUrl(null)}
+              className="mt-2 text-xs text-gray-400 hover:text-red-400">
+              Remove image
+            </button>
+          )}
         </div>
       </div>
 
       <div className="flex justify-end">
         <button
-          onClick={generate}
-          disabled={generating || !activeProject}
-          className="px-6 py-3 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-semibold rounded text-sm"
+          onClick={design}
+          disabled={designing || !prompt.trim()}
+          className="px-6 py-3 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white font-semibold rounded text-sm"
         >
-          {generating ? 'Generating...' : 'Generate Module'}
+          {designing ? 'Thinking…' : '✨ Generate Blueprint'}
         </button>
       </div>
-    </div>
-  )
-}
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div>
-      <label className="block text-xs text-gray-400 mb-1">{label}</label>
-      {children}
+      {/* Stage 2: blueprint review + build */}
+      {blueprint && (
+        <div className="p-4 rounded-lg space-y-3" style={{ background: '#0d1117', border: '1px solid #21262d' }}>
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-white">Blueprint — {blueprint.theme || '(untitled)'}</h2>
+            <button onClick={() => setBlueprintExpanded(e => !e)}
+              className="text-xs text-gray-400 hover:text-white">
+              {blueprintExpanded ? '▼ Collapse' : '▶ Expand'}
+            </button>
+          </div>
+
+          {blueprintExpanded && (
+            <>
+              <div className="grid grid-cols-2 gap-4 text-xs">
+                <div>
+                  <div className="text-gray-400 mb-1">Style notes</div>
+                  <div className="text-gray-200">{blueprint.style_notes}</div>
+                </div>
+                <div>
+                  <div className="text-gray-400 mb-1">Bounding box</div>
+                  <div className="text-gray-200 font-mono">
+                    {blueprint.bounding_box.x} × {blueprint.bounding_box.y} × {blueprint.bounding_box.z}
+                    {blueprint.utility_gap && <span className="ml-3 text-cyan-400">utility_gap=true</span>}
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <div className="text-xs text-gray-400 mb-1">Material palette</div>
+                <div className="grid grid-cols-3 gap-1 text-xs font-mono text-gray-200">
+                  {Object.entries(blueprint.material_palette).map(([k, v]) => (
+                    <div key={k}><span className="text-gray-500">{k}:</span> {v}</div>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <div className="text-xs text-gray-400 mb-1">Rooms ({blueprint.rooms.length})</div>
+                <div className="space-y-1">
+                  {blueprint.rooms.map(r => (
+                    <div key={r.id} className="text-xs bg-gray-800 rounded px-2 py-1.5 flex flex-wrap gap-x-3 gap-y-0.5">
+                      <span className="text-cyan-300 font-mono">{r.id}</span>
+                      <span className="text-gray-300">{r.label}</span>
+                      <span className="text-gray-500">[{r.type}]</span>
+                      <span className="text-gray-400 font-mono">size {r.size.x}×{r.size.y}×{r.size.z}</span>
+                      <span className="text-gray-400 font-mono">@ ({r.position.x},{r.position.y},{r.position.z})</span>
+                      {r.connects_to.length > 0 && <span className="text-yellow-300">→ {r.connects_to.join(', ')}</span>}
+                      {r.features.length > 0 && <span className="text-purple-300">{r.features.join(' · ')}</span>}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <details className="text-xs">
+                <summary className="text-gray-500 cursor-pointer hover:text-gray-300">Raw JSON</summary>
+                <pre className="text-gray-300 bg-gray-900 p-2 rounded font-mono mt-2 overflow-auto max-h-64">
+                  {JSON.stringify(blueprint, null, 2)}
+                </pre>
+              </details>
+            </>
+          )}
+
+          <div className="flex justify-end pt-2">
+            <button
+              onClick={build}
+              disabled={building || !activeProject}
+              className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-semibold rounded text-sm"
+            >
+              {building ? 'Building…' : '🏗 Build Module'}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
