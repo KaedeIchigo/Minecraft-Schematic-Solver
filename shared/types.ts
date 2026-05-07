@@ -236,7 +236,7 @@ export interface Blueprint {
 
 export interface DesignBrainRequest {
   prompt: string
-  imageBase64?: string             // optional reference image (data URL or raw base64)
+  imageBase64?: string | string[]  // one or more reference images (data URLs or raw base64)
   apiKey?: string                  // optional override; falls back to OPENROUTER_API_KEY env
   model?: string                   // optional model override
 }

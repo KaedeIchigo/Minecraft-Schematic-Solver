@@ -7,14 +7,27 @@ const Vec3Schema = z.object({
   z: z.number().finite(),
 })
 
+// connects_to can be an array of strings OR objects with {id, connection_type}
+// Normalize to string[] (room IDs only) for the layout engine.
+const ConnectsToEntrySchema = z.union([
+  z.string(),
+  z.object({ id: z.string(), connection_type: z.string().optional() }).transform(o => o.id),
+])
+
 const RoomSchema = z.object({
   id: z.string().min(1),
   label: z.string().default(''),
   type: z.string().default('room'),
   size: Vec3Schema,
   position: Vec3Schema,
-  connects_to: z.array(z.string()).default([]),
+  connects_to: z.array(ConnectsToEntrySchema).default([]),
   features: z.array(z.string()).default([]),
+  // Shape extension fields (optional, consumed by future layout engine extensions)
+  shape: z.string().optional(),
+  arm_width: z.number().optional(),
+  arm_length: z.number().optional(),
+  radius: z.number().optional(),
+  direction: z.string().optional(),
 })
 
 const PaletteSchema = z.object({

@@ -7,13 +7,14 @@ import { resolveBlock } from '@shared/blockRegistry.js'
 
 const API_KEY_STORAGE = 'openrouter_api_key'
 const MODEL_STORAGE   = 'openrouter_model'
+const MAX_IMAGES = 4
 
 export default function Generator() {
   const navigate = useNavigate()
   const { activeProject, addTemplate } = useAppStore()
 
   const [prompt, setPrompt] = useState('')
-  const [imageDataUrl, setImageDataUrl] = useState<string | null>(null)
+  const [imageList, setImageList] = useState<string[]>([])
   const [blueprint, setBlueprint] = useState<Blueprint | null>(null)
   const [blueprintExpanded, setBlueprintExpanded] = useState(true)
   const [designing, setDesigning] = useState(false)
@@ -39,16 +40,28 @@ export default function Generator() {
       setError('Dropped file is not an image')
       return
     }
+    if (imageList.length >= MAX_IMAGES) {
+      setError(`Maximum ${MAX_IMAGES} reference images allowed`)
+      return
+    }
     const reader = new FileReader()
-    reader.onload = () => setImageDataUrl(String(reader.result))
+    reader.onload = () => {
+      setImageList(prev => prev.length < MAX_IMAGES ? [...prev, String(reader.result)] : prev)
+    }
     reader.readAsDataURL(file)
+  }
+
+  function removeImage(index: number) {
+    setImageList(prev => prev.filter((_, i) => i !== index))
   }
 
   function onDrop(e: React.DragEvent<HTMLDivElement>) {
     e.preventDefault()
     setDragOver(false)
-    const file = e.dataTransfer.files?.[0]
-    if (file) handleImageFile(file)
+    const files = Array.from(e.dataTransfer.files ?? [])
+    for (const file of files) {
+      handleImageFile(file)
+    }
   }
 
   async function design() {
@@ -57,7 +70,7 @@ export default function Generator() {
     try {
       const { blueprint } = await api.templates.design({
         prompt,
-        imageBase64: imageDataUrl ?? undefined,
+        imageBase64: imageList.length > 0 ? imageList : undefined,
         apiKey: apiKey || undefined,
         model: model || undefined,
       })
@@ -79,7 +92,7 @@ export default function Generator() {
         projectId: activeProject.id,
         blueprint,
         prompt,
-        sourceImage: imageDataUrl ?? undefined,
+        sourceImage: imageList[0] ?? undefined,
       })
       addTemplate(tpl)
       setGenerated(tpl.id)
@@ -151,36 +164,61 @@ export default function Generator() {
           />
         </div>
 
-        <div className="p-4 rounded-lg" style={{ background: '#0d1117', border: '1px solid #21262d' }}>
-          <h2 className="text-sm font-semibold text-gray-300 mb-2">Reference image (optional)</h2>
-          <div
-            onDragOver={e => { e.preventDefault(); setDragOver(true) }}
-            onDragLeave={() => setDragOver(false)}
-            onDrop={onDrop}
-            onClick={() => fileInputRef.current?.click()}
-            className={`flex flex-col items-center justify-center h-48 rounded-lg cursor-pointer transition-colors ${
-              dragOver ? 'bg-blue-900 border-blue-500' : 'bg-gray-800 border-gray-700'
-            }`}
-            style={{ border: '2px dashed' }}
-          >
-            {imageDataUrl ? (
-              <img src={imageDataUrl} alt="reference" className="max-h-full max-w-full object-contain rounded" />
-            ) : (
-              <div className="text-center text-gray-400 text-sm">
-                <div className="text-2xl mb-2">📷</div>
-                Drop an image here, or click to upload<br />
-                <span className="text-xs text-gray-500">Sent to the vision model alongside your prompt</span>
-              </div>
-            )}
-          </div>
-          <input ref={fileInputRef} type="file" accept="image/*" className="hidden"
-            onChange={e => { const f = e.target.files?.[0]; if (f) handleImageFile(f) }} />
-          {imageDataUrl && (
-            <button onClick={() => setImageDataUrl(null)}
-              className="mt-2 text-xs text-gray-400 hover:text-red-400">
-              Remove image
-            </button>
+        <div className="p-4 rounded-lg space-y-2" style={{ background: '#0d1117', border: '1px solid #21262d' }}>
+          <h2 className="text-sm font-semibold text-gray-300">
+            Reference images
+            <span className="ml-2 text-gray-500 font-normal text-xs">({imageList.length}/{MAX_IMAGES})</span>
+          </h2>
+
+          {/* Thumbnail grid */}
+          {imageList.length > 0 && (
+            <div className="grid grid-cols-2 gap-2">
+              {imageList.map((src, i) => (
+                <div key={i} className="relative group rounded overflow-hidden" style={{ aspectRatio: '1' }}>
+                  <img src={src} alt={`Reference ${i + 1}`} className="w-full h-full object-cover" />
+                  <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-40 transition-all" />
+                  <button
+                    onClick={() => removeImage(i)}
+                    className="absolute top-1 right-1 w-5 h-5 rounded-full bg-red-600 text-white text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity leading-none"
+                    title="Remove"
+                  >
+                    ×
+                  </button>
+                  <div className="absolute bottom-0 left-0 right-0 text-center text-xs text-white bg-black bg-opacity-50 py-0.5">
+                    Ref {i + 1}
+                  </div>
+                </div>
+              ))}
+            </div>
           )}
+
+          {/* Drop zone — only shown when under the limit */}
+          {imageList.length < MAX_IMAGES && (
+            <div
+              onDragOver={e => { e.preventDefault(); setDragOver(true) }}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={onDrop}
+              onClick={() => fileInputRef.current?.click()}
+              className={`flex flex-col items-center justify-center rounded-lg cursor-pointer transition-colors ${
+                imageList.length === 0 ? 'h-40' : 'h-20'
+              } ${dragOver ? 'bg-blue-900 border-blue-500' : 'bg-gray-800 border-gray-700'}`}
+              style={{ border: '2px dashed' }}
+            >
+              <div className="text-center text-gray-400 text-sm">
+                <div className="text-xl mb-1">📷</div>
+                <span className="text-xs">Drop images here, or click to upload</span>
+                {imageList.length === 0 && (
+                  <div className="text-xs text-gray-500 mt-1">Up to {MAX_IMAGES} images · sent as labeled vision blocks</div>
+                )}
+              </div>
+            </div>
+          )}
+
+          <input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden"
+            onChange={e => {
+              Array.from(e.target.files ?? []).forEach(f => handleImageFile(f))
+              e.target.value = ''
+            }} />
         </div>
       </div>
 

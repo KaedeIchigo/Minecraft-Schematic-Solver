@@ -4,52 +4,35 @@ import { extractJsonObject, parseBlueprint } from '../../shared/blueprintSchema.
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions'
 const DEFAULT_MODEL = 'google/gemini-flash-1.5'
 
-const SYSTEM_PROMPT = `You are the Design Brain for a Minecraft procedural-base planner.
-Given a user prompt (and optionally a reference image), produce a single JSON
-object — and ONLY that JSON object — describing a buildable structure.
+const SYSTEM_PROMPT = `You are an expert Minecraft structure architect. Your job is to analyze a reference image (if provided) and generate a precise structural blueprint in JSON format.
 
-The JSON MUST exactly match this schema:
+CRITICAL RULES:
+1. If an image is provided, it is your PRIMARY reference. Extract its geometry FIRST before anything else.
+2. Identify the overall silhouette and massing from the image: Is it a tower? Cross-shaped? Has wings? Symmetric? Vertical or horizontal emphasis?
+3. Identify the structural layers from bottom to top and describe each.
+4. Room positions must reflect the actual spatial layout visible in the image — rooms that appear side by side must have adjacent coordinates, rooms stacked vertically must reflect that in Y position.
+5. If the build has a central core, that must be reflected as a central room. Wings or extensions must be rooms positioned outward from that core.
+6. Do NOT default to a generic "scatter rooms randomly" layout. Every room position must be justified by what you see.
+7. The bounding_box must reflect the true proportions of the structure — if it is tall and narrow, Y should be larger. If it is wide with wings, X and Z should be larger.
 
-{
-  "theme": "<short theme name, e.g. lunar industrial base>",
-  "style_notes": "<one or two sentences of aesthetic guidance>",
-  "material_palette": {
-    "primary_wall":   "<abstract material name, e.g. stone_brick, polished_blackstone>",
-    "secondary_wall": "<abstract material name>",
-    "floor":          "<abstract material name>",
-    "ceiling":        "<abstract material name>",
-    "accent":         "<abstract material name for decorative trim>",
-    "frame_material": "<material used for framed-block camo>"
-  },
-  "bounding_box": { "x": <int>, "y": <int>, "z": <int> },
-  "utility_gap": <true|false>,
-  "rooms": [
-    {
-      "id":          "<unique kebab-case id>",
-      "label":       "<short human label>",
-      "type":        "<one of: hall, room, corridor, stairwell, utility>",
-      "size":        { "x": <int>, "y": <int>, "z": <int> },
-      "position":    { "x": <int>, "y": <int>, "z": <int> },
-      "connects_to": ["<other room id>", ...],
-      "features":    ["<e.g. arched_ceiling, large_windows, support_pillars>"]
-    }
-  ]
-}
+SHAPE EXTENSIONS:
+The blueprint supports non-rectangular room shapes via an optional "shape" field per room:
+- "shape": "rectangle" (default)
+- "shape": "cross" — room extends as a plus/cross shape, use "arm_width" and "arm_length" sub-fields
+- "shape": "octagon" — approximated octagon, use "radius" sub-field
+- "shape": "cylinder" — circular tower, use "radius" sub-field
+- "shape": "wedge" — triangular/diagonal shape, use "direction" sub-field ("NE","NW","SE","SW")
+- "shape": "column" — single-block-wide vertical shaft, uses only Y size
 
-RULES:
-- Output ONLY the JSON object. No prose, no Markdown fences, no explanations.
-- All sizes are inner dimensions in blocks (the outer footprint adds walls).
-- Minimum room inner height is 4 blocks. Use larger heights for halls.
-- Room "position" is the outer min corner relative to the structure origin.
-- Position rooms so they fit within bounding_box and don't overlap (touching walls is fine).
-- Use connects_to to indicate doorways between rooms. Connections are bidirectional.
-- Set utility_gap=true for industrial/tech themes that benefit from cabling space.
-- 4–8 rooms is a typical good count. More if the prompt suggests a large complex.
-- Material names are abstract; the engine resolves them. Prefer common Minecraft block names.`
+CONNECTIVITY:
+- connects_to must reflect ACTUAL adjacency. Only connect rooms that physically touch or are directly accessible from each other.
+- Include a "connection_type" per entry in connects_to: "doorway" | "open" | "shaft" | "bridge"
+
+OUTPUT: Return ONLY valid JSON matching the blueprint schema. No preamble, no explanation, no markdown fences.`
 
 export interface DesignBrainOptions {
   prompt: string
-  imageBase64?: string
+  imageBase64?: string | string[]
   apiKey?: string
   model?: string
   temperature?: number
@@ -71,12 +54,16 @@ export async function callDesignBrain(opts: DesignBrainOptions): Promise<Bluepri
 
   type Part = { type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } }
   const userContent: Part[] = [{ type: 'text', text: opts.prompt }]
-  if (opts.imageBase64) {
-    const url = opts.imageBase64.startsWith('data:')
-      ? opts.imageBase64
-      : `data:image/png;base64,${opts.imageBase64}`
+
+  const images = opts.imageBase64
+    ? Array.isArray(opts.imageBase64) ? opts.imageBase64 : [opts.imageBase64]
+    : []
+
+  images.forEach((img, i) => {
+    const url = img.startsWith('data:') ? img : `data:image/png;base64,${img}`
+    userContent.push({ type: 'text', text: `Reference image ${i + 1}:` })
     userContent.push({ type: 'image_url', image_url: { url } })
-  }
+  })
 
   const body = {
     model,
