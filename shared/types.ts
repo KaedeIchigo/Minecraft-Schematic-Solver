@@ -213,7 +213,14 @@ export interface BlueprintRoom {
   size: Vec3                         // inner dimensions (interior only)
   position: Vec3                     // relative to structure origin (min corner of room footprint)
   connects_to: string[]
+  connect_types?: Record<string, string>  // connection_type per connected room ID
   features: string[]
+  // Shape extension fields
+  shape?: 'rectangle' | 'cross' | 'octagon' | 'cylinder' | 'wedge' | 'column'
+  arm_width?: number
+  arm_length?: number
+  radius?: number
+  direction?: string                 // NE/NW/SE/SW for wedge
 }
 
 export interface BlueprintMaterialPalette {

@@ -7,11 +7,10 @@ const Vec3Schema = z.object({
   z: z.number().finite(),
 })
 
-// connects_to can be an array of strings OR objects with {id, connection_type}
-// Normalize to string[] (room IDs only) for the layout engine.
-const ConnectsToEntrySchema = z.union([
+// connects_to entries can be plain strings or {id, connection_type} objects.
+const ConnectsToEntryRaw = z.union([
   z.string(),
-  z.object({ id: z.string(), connection_type: z.string().optional() }).transform(o => o.id),
+  z.object({ id: z.string(), connection_type: z.string().optional() }),
 ])
 
 const RoomSchema = z.object({
@@ -20,14 +19,22 @@ const RoomSchema = z.object({
   type: z.string().default('room'),
   size: Vec3Schema,
   position: Vec3Schema,
-  connects_to: z.array(ConnectsToEntrySchema).default([]),
+  connects_to: z.array(ConnectsToEntryRaw).default([]),
   features: z.array(z.string()).default([]),
-  // Shape extension fields (optional, consumed by future layout engine extensions)
   shape: z.string().optional(),
   arm_width: z.number().optional(),
   arm_length: z.number().optional(),
   radius: z.number().optional(),
   direction: z.string().optional(),
+}).transform(room => {
+  // Normalise: extract IDs into connects_to[], build connect_types map from objects.
+  const connect_types: Record<string, string> = {}
+  const connects_to = room.connects_to.map(entry => {
+    if (typeof entry === 'string') return entry
+    if (entry.connection_type) connect_types[entry.id] = entry.connection_type
+    return entry.id
+  })
+  return { ...room, connects_to, connect_types }
 })
 
 const PaletteSchema = z.object({
