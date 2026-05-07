@@ -437,4 +437,36 @@ describe('layoutEngine', () => {
       rooms: [],
     })).toThrow()
   })
+
+  // ── Schema robustness (real-world model output formats) ───────────────────
+
+  it('parseBlueprint tolerates missing material_palette, flat position/size, and target-keyed connects_to', () => {
+    // This reproduces the exact JSON format Gemini Flash produced in the wild
+    const bp = parseBlueprint({
+      bounding_box: { x: 50, y: 40, z: 50 },
+      rooms: [
+        { id: 'base', x: 12, y: 0, z: 12, x_size: 26, y_size: 5, z_size: 26,
+          shape: 'octagon', radius: 13 },
+        { id: 'core', x: 22, y: 5, z: 22, x_size: 6, y_size: 5, z_size: 6,
+          connects_to: [
+            { target: 'base', connection_type: 'open' },
+            { target: 'upper', connection_type: 'shaft' },
+          ] },
+        { id: 'upper', x: 22, y: 11, z: 22, x_size: 6, y_size: 5, z_size: 6,
+          connects_to: [{ target: 'core', connection_type: 'shaft' }] },
+      ],
+    })
+    // material_palette filled with defaults
+    expect(bp.material_palette.primary_wall).toBe('stone_brick')
+    // flat position → nested
+    expect(bp.rooms[0].position).toEqual({ x: 12, y: 0, z: 12 })
+    expect(bp.rooms[0].size).toEqual({ x: 26, y: 5, z: 26 })
+    // target → id, connect_types extracted
+    expect(bp.rooms[1].connects_to).toContain('base')
+    expect(bp.rooms[1].connect_types?.['base']).toBe('open')
+    expect(bp.rooms[1].connect_types?.['upper']).toBe('shaft')
+    // schema field round-trips
+    expect(bp.rooms[0].shape).toBe('octagon')
+    expect(bp.rooms[0].radius).toBe(13)
+  })
 })
