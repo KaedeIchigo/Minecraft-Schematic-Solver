@@ -29,7 +29,7 @@ function singleRoom(overrides: Partial<Blueprint> = {}): Blueprint {
 describe('layoutEngine', () => {
   it('resolves abstract material names to namespaced block IDs', () => {
     expect(resolveMaterial('stone_brick')).toBe('minecraft:stone_bricks')
-    expect(resolveMaterial('polished_blackstone')).toBe('minecraft:polished_blackstone_bricks')
+    expect(resolveMaterial('polished_blackstone')).toBe('minecraft:polished_blackstone')
     expect(resolveMaterial('minecraft:something_custom')).toBe('minecraft:something_custom')
     expect(resolveMaterial('Stone Brick')).toBe('minecraft:stone_bricks') // case + space
   })

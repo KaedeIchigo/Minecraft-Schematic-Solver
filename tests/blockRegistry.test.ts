@@ -7,7 +7,7 @@ import {
 describe('blockRegistry.resolveBlock', () => {
   it('resolves vanilla abstract names', () => {
     expect(resolveBlock('stone_brick').blockId).toBe('minecraft:stone_bricks')
-    expect(resolveBlock('polished_blackstone').blockId).toBe('minecraft:polished_blackstone_bricks')
+    expect(resolveBlock('polished_blackstone').blockId).toBe('minecraft:polished_blackstone')
     expect(resolveBlock('deepslate').blockId).toBe('minecraft:deepslate_bricks')
     expect(resolveBlock('copper').blockId).toBe('minecraft:exposed_copper')
     expect(resolveBlock('obsidian').blockId).toBe('minecraft:obsidian')
@@ -25,7 +25,7 @@ describe('blockRegistry.resolveBlock', () => {
 
   it('handles dashes, spaces, and case variations', () => {
     expect(resolveBlock('Stone Brick').blockId).toBe('minecraft:stone_bricks')
-    expect(resolveBlock('polished-blackstone').blockId).toBe('minecraft:polished_blackstone_bricks')
+    expect(resolveBlock('polished-blackstone').blockId).toBe('minecraft:polished_blackstone')
     expect(resolveBlock('  COPPER  ').blockId).toBe('minecraft:exposed_copper')
   })
 
@@ -48,7 +48,7 @@ describe('blockRegistry.resolveBlock', () => {
       ['framed_stone_brick',          'minecraft:stone_bricks'],
       ['framed_deepslate',            'minecraft:deepslate_bricks'],
       ['framed_quartz',               'minecraft:quartz_block'],
-      ['framed_polished_blackstone',  'minecraft:polished_blackstone_bricks'],
+      ['framed_polished_blackstone',  'minecraft:polished_blackstone'],
       ['framed_copper',               'minecraft:exposed_copper'],
     ]
     for (const [input, expectedCamo] of cases) {

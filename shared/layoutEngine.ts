@@ -192,7 +192,7 @@ function buildCrossShell(box: RoomBox, pal: ResolvedPalette): BlockEntry[] {
   // (the shared wall face where center east/west/north/south meets arm interior).
   const junctions = new Set<string>()
   function addJunction(fixX: number | null, fixZ: number | null,
-                       rMin: number, rMax: number, rAxis: 'x' | 'z') {
+                       rMin: number, rMax: number) {
     for (let r = rMin + 1; r < rMax; r++) {
       for (let y = origin.y + 1; y < outerMax.y; y++) {
         const key = fixX !== null
@@ -203,10 +203,10 @@ function buildCrossShell(box: RoomBox, pal: ResolvedPalette): BlockEntry[] {
     }
   }
   if (armLen > 0) {
-    addJunction(outerMax.x,  null,       czLo, czHi, 'x')  // +X arm junction
-    addJunction(origin.x,    null,       czLo, czHi, 'x')  // -X arm junction
-    addJunction(null,        outerMax.z, cxLo, cxHi, 'z')  // +Z arm junction
-    addJunction(null,        origin.z,   cxLo, cxHi, 'z')  // -Z arm junction
+    addJunction(outerMax.x,  null,       czLo, czHi)  // +X arm junction
+    addJunction(origin.x,    null,       czLo, czHi)  // -X arm junction
+    addJunction(null,        outerMax.z, cxLo, cxHi)  // +Z arm junction
+    addJunction(null,        origin.z,   cxLo, cxHi)  // -Z arm junction
   }
 
   const deduped = deduplicateBlocks(blocks)

@@ -172,12 +172,44 @@ const KNOWN_COLORS: Record<string, BlockColorEntry> = {
   // Create
   'create:grate': { color: '#7A7A7A' },
   'create:copper_grate': { color: '#B07050' },
+  'create:industrial_iron_block': { color: '#5A6A6A' },
+  'create:andesite_machine_casing': { color: '#5A5A52' },
+  'create:brass_machine_casing': { color: '#7A6A3A' },
+  'create:copper_machine_casing': { color: '#7A4A2A' },
+  'create:framed_glass': { color: '#D0E8F0' },
+  'create:blaze_lantern': { color: '#E06020', emissive: true },
+  'create:fluid_pipe': { color: '#5A5A6A' },
+  'create:shaft': { color: '#6A5A4A' },
+  'create:chute': { color: '#4A5A5A' },
+  'create:depot': { color: '#5A5050' },
+
+  // Immersive Engineering
+  'immersiveengineering:storage_steel': { color: '#5A6878' },
+  'immersiveengineering:storage_aluminum': { color: '#8A9AAA' },
+  'immersiveengineering:storage_lead': { color: '#4A4A5A' },
+  'immersiveengineering:treated_wood_horizontal': { color: '#5A4A2A' },
+  'immersiveengineering:concrete': { color: '#7A7A72' },
+  'immersiveengineering:sheetmetal_steel': { color: '#6A7888' },
+  'immersiveengineering:sheetmetal_aluminum': { color: '#8AABB8' },
+
+  // Mekanism
+  'mekanism:steel_casing': { color: '#5A6878' },
+  'mekanism:basic_control_circuit': { color: '#3A5A3A' },
+  'mekanism:hdpe_reinforced_glass': { color: '#A0C8D0' },
+  'mekanism:teleporter_frame': { color: '#2A3A5A' },
+  'mekanism:steel_block': { color: '#6A7888' },
+
+  // Thermal
+  'thermal:machine_frame': { color: '#7A6A3A' },
+  'thermal:rockwool': { color: '#8A7A6A' },
+  'thermal:duct': { color: '#6A5A4A' },
 
   // Mod-generic fallbacks by prefix
 }
 
 // Category fallbacks for unknown blocks
 const CATEGORY_COLORS: Array<{ prefix: string; color: string }> = [
+  { prefix: 'immersiveengineering:', color: '#6a7888' },
   { prefix: 'ae2:', color: '#1A4060' },
   { prefix: 'appliedenergistics2:', color: '#1A4060' },
   { prefix: 'mekanism:', color: '#0A6060' },

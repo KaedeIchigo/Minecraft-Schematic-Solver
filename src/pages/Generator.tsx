@@ -1,13 +1,125 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../store/api.ts'
 import { useAppStore } from '../store/appStore.ts'
-import type { Blueprint } from '@shared/types.js'
-import { resolveBlock } from '@shared/blockRegistry.js'
+import type { Blueprint, BlueprintMaterialPalette } from '@shared/types.js'
+import { resolveBlock, getEntriesByCategory, findEntryById } from '@shared/blockRegistry.js'
 
 const API_KEY_STORAGE = 'openrouter_api_key'
 const MODEL_STORAGE   = 'openrouter_model'
 const MAX_IMAGES = 4
+
+const PALETTE_SLOTS: Array<{ key: keyof BlueprintMaterialPalette; label: string }> = [
+  { key: 'primary_wall',   label: 'Primary Wall' },
+  { key: 'secondary_wall', label: 'Secondary Wall' },
+  { key: 'floor',          label: 'Floor' },
+  { key: 'ceiling',        label: 'Ceiling' },
+  { key: 'accent',         label: 'Accent' },
+  { key: 'frame_material', label: 'Frame Material' },
+]
+
+function BlockTemplatesPanel({
+  palette, overrides, search, onSearchChange, onChange, onReset,
+}: {
+  palette: BlueprintMaterialPalette
+  overrides: Partial<BlueprintMaterialPalette>
+  search: string
+  onSearchChange: (s: string) => void
+  onChange: (overrides: Partial<BlueprintMaterialPalette>) => void
+  onReset: () => void
+}) {
+  const categoryMap = useMemo(() => getEntriesByCategory(), [])
+  const allEntries = useMemo(() => {
+    const entries = Array.from(categoryMap.values()).flat()
+    if (!search.trim()) return entries
+    const q = search.toLowerCase()
+    return entries.filter(e =>
+      e.displayName.toLowerCase().includes(q) ||
+      e.id.toLowerCase().includes(q) ||
+      e.blockId.toLowerCase().includes(q)
+    )
+  }, [categoryMap, search])
+
+  function setSlot(key: keyof BlueprintMaterialPalette, value: string) {
+    onChange({ ...overrides, [key]: value })
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2">
+        <input
+          value={search}
+          onChange={e => onSearchChange(e.target.value)}
+          placeholder="Search blocks…"
+          className="flex-1 bg-gray-800 border border-gray-700 text-white text-xs px-2 py-1.5 rounded font-mono outline-none focus:border-blue-500"
+        />
+        <button
+          onClick={onReset}
+          className="text-xs px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-300 rounded whitespace-nowrap"
+        >
+          Reset to AI picks
+        </button>
+      </div>
+
+      <div className="space-y-2">
+        {PALETTE_SLOTS.map(({ key, label }) => {
+          const current = overrides[key] ?? palette[key]
+          const currentEntry = findEntryById(current)
+          const isOverridden = !!overrides[key]
+          return (
+            <div key={key} className="flex items-center gap-2 text-xs">
+              <span className="text-gray-400 w-36 shrink-0">{label}</span>
+              {currentEntry && (
+                <span
+                  className="w-4 h-4 rounded shrink-0 border border-gray-600"
+                  style={{ background: currentEntry.rendererColor }}
+                  title={currentEntry.blockId}
+                />
+              )}
+              <select
+                value={current}
+                onChange={e => setSlot(key, e.target.value)}
+                className="flex-1 bg-gray-800 border border-gray-700 text-gray-200 text-xs px-2 py-1 rounded font-mono outline-none focus:border-blue-500"
+              >
+                {search.trim() ? (
+                  <optgroup label="Search results">
+                    {allEntries.map(e => (
+                      <option key={e.id} value={e.id}>{e.displayName} ({e.id})</option>
+                    ))}
+                  </optgroup>
+                ) : (
+                  Array.from(categoryMap.entries()).map(([cat, entries]) => (
+                    <optgroup key={cat} label={cat.replace(/_/g, ' ')}>
+                      {entries.map(e => (
+                        <option key={e.id} value={e.id}>{e.displayName}</option>
+                      ))}
+                    </optgroup>
+                  ))
+                )}
+              </select>
+              {isOverridden && (
+                <button
+                  onClick={() => {
+                    const next = { ...overrides }
+                    delete next[key]
+                    onChange(next)
+                  }}
+                  className="text-yellow-400 hover:text-yellow-200 text-xs px-1"
+                  title="Revert to AI pick"
+                >↩</button>
+              )}
+            </div>
+          )
+        })}
+      </div>
+
+      <div className="text-xs text-gray-500 pt-1">
+        Overriding {Object.keys(overrides).length} of {PALETTE_SLOTS.length} slots.
+        Changes apply when you click Build.
+      </div>
+    </div>
+  )
+}
 
 export default function Generator() {
   const navigate = useNavigate()
@@ -17,6 +129,9 @@ export default function Generator() {
   const [imageList, setImageList] = useState<string[]>([])
   const [blueprint, setBlueprint] = useState<Blueprint | null>(null)
   const [blueprintExpanded, setBlueprintExpanded] = useState(true)
+  const [blueprintTab, setBlueprintTab] = useState<'blueprint' | 'palette'>('blueprint')
+  const [paletteOverrides, setPaletteOverrides] = useState<Partial<BlueprintMaterialPalette>>({})
+  const [materialSearch, setMaterialSearch] = useState('')
   const [designing, setDesigning] = useState(false)
   const [building, setBuilding] = useState(false)
   const [error, setError] = useState('')
@@ -83,6 +198,11 @@ export default function Generator() {
     }
   }
 
+  function effectivePalette(): BlueprintMaterialPalette | undefined {
+    if (!blueprint) return undefined
+    return { ...blueprint.material_palette, ...paletteOverrides }
+  }
+
   async function build() {
     if (!activeProject) { setError('Select or create a project first'); return }
     if (!blueprint) return
@@ -90,7 +210,7 @@ export default function Generator() {
     try {
       const tpl = await api.templates.build({
         projectId: activeProject.id,
-        blueprint,
+        blueprint: { ...blueprint, material_palette: effectivePalette()! },
         prompt,
         sourceImage: imageList[0] ?? undefined,
       })
@@ -236,14 +356,26 @@ export default function Generator() {
       {blueprint && (
         <div className="p-4 rounded-lg space-y-3" style={{ background: '#0d1117', border: '1px solid #21262d' }}>
           <div className="flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-white">Blueprint — {blueprint.theme || '(untitled)'}</h2>
+            <div className="flex items-center gap-3">
+              <h2 className="text-sm font-semibold text-white">Blueprint — {blueprint.theme || '(untitled)'}</h2>
+              <div className="flex rounded overflow-hidden border border-gray-700 text-xs">
+                <button
+                  onClick={() => setBlueprintTab('blueprint')}
+                  className={`px-3 py-1 ${blueprintTab === 'blueprint' ? 'bg-gray-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-white'}`}
+                >Blueprint</button>
+                <button
+                  onClick={() => setBlueprintTab('palette')}
+                  className={`px-3 py-1 ${blueprintTab === 'palette' ? 'bg-gray-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-white'}`}
+                >Block Templates</button>
+              </div>
+            </div>
             <button onClick={() => setBlueprintExpanded(e => !e)}
               className="text-xs text-gray-400 hover:text-white">
               {blueprintExpanded ? '▼ Collapse' : '▶ Expand'}
             </button>
           </div>
 
-          {blueprintExpanded && (
+          {blueprintExpanded && blueprintTab === 'blueprint' && (
             <>
               <div className="grid grid-cols-2 gap-4 text-xs">
                 <div>
@@ -262,8 +394,8 @@ export default function Generator() {
               <div>
                 <div className="text-xs text-gray-400 mb-1">Material palette</div>
                 <div className="grid grid-cols-3 gap-1 text-xs font-mono text-gray-200">
-                  {Object.entries(blueprint.material_palette).map(([k, v]) => (
-                    <div key={k}><span className="text-gray-500">{k}:</span> {v}</div>
+                  {Object.entries(effectivePalette()!).map(([k, v]) => (
+                    <div key={k}><span className="text-gray-500">{k}:</span> {v}{paletteOverrides[k as keyof BlueprintMaterialPalette] ? <span className="text-yellow-400 ml-1">*</span> : null}</div>
                   ))}
                 </div>
               </div>
@@ -271,12 +403,14 @@ export default function Generator() {
               <div>
                 <div className="text-xs text-gray-400 mb-1">Palette preview (resolved)</div>
                 <div className="space-y-1">
-                  {Object.entries(blueprint.material_palette).map(([key, abstract]) => {
+                  {Object.entries(effectivePalette()!).map(([key, abstract]) => {
                     const resolved = resolveBlock(abstract)
                     const camo = resolved.nbtData?.['CamoState'] as { Name?: string } | undefined
+                    const entry = findEntryById(abstract)
                     return (
                       <div key={key} className="flex items-center justify-between text-xs bg-gray-800 px-2 py-1 rounded font-mono">
                         <span className="text-gray-400 w-32 shrink-0">{key}</span>
+                        {entry && <span className="w-3 h-3 rounded-sm shrink-0 mr-1" style={{ background: entry.rendererColor }} />}
                         <span className="text-gray-300 w-32 shrink-0">{abstract}</span>
                         <span className="text-gray-500 mx-1">→</span>
                         <span className="text-emerald-300 truncate flex-1">
@@ -290,11 +424,11 @@ export default function Generator() {
                   })}
                   <div className="flex items-center justify-between text-xs bg-gray-800 px-2 py-1 rounded font-mono">
                     <span className="text-gray-400 w-32 shrink-0">framed_pillar</span>
-                    <span className="text-gray-300 w-32 shrink-0">framed_{blueprint.material_palette.frame_material}</span>
+                    <span className="text-gray-300 w-32 shrink-0">framed_{effectivePalette()!.frame_material}</span>
                     <span className="text-gray-500 mx-1">→</span>
                     <span className="text-emerald-300 truncate flex-1">
                       {(() => {
-                        const r = resolveBlock(`framed_${blueprint.material_palette.frame_material}`)
+                        const r = resolveBlock(`framed_${effectivePalette()!.frame_material}`)
                         const c = r.nbtData?.['CamoState'] as { Name?: string } | undefined
                         return <>{r.blockId}{c?.Name && <span className="text-purple-300 ml-1">camo:{c.Name}</span>}</>
                       })()}
@@ -327,6 +461,17 @@ export default function Generator() {
                 </pre>
               </details>
             </>
+          )}
+
+          {blueprintExpanded && blueprintTab === 'palette' && (
+            <BlockTemplatesPanel
+              palette={effectivePalette()!}
+              overrides={paletteOverrides}
+              search={materialSearch}
+              onSearchChange={setMaterialSearch}
+              onChange={setPaletteOverrides}
+              onReset={() => setPaletteOverrides({})}
+            />
           )}
 
           <div className="flex justify-end pt-2">
