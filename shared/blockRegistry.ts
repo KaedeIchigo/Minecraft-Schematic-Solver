@@ -1,24 +1,17 @@
 import type { BlockState } from './types.js'
 
-// =============================================================================
-// Block Registry — ATM10 to the Sky expanded palette
-// =============================================================================
-// Each RegistryEntry is the canonical record for a buildable block.
-// The `id` field is the lookup key used in Blueprint material_palette values.
-// resolveBlock() accepts abstract ids, namespaced block IDs, and framed_ prefix forms.
-
 export interface RegistryEntry {
-  id:            string                    // abstract name used in blueprints + palette dropdowns
-  displayName:   string                    // shown in UI
-  blockId:       string                    // actual in-game block ID
-  isFramed:      boolean                   // true → framed_blocks:framed_cube with CamoState
-  camoBlockId?:  string                    // required when isFramed is true
-  properties?:   Record<string, string>    // block state properties (e.g. axis, facing)
-  category:      string                    // UI grouping
-  rendererColor: string                    // hex color for the 3D renderer
+  id:            string
+  displayName:   string
+  blockId:       string
+  isFramed:      boolean
+  camoBlockId?:  string
+  properties?:   Record<string, string>
+  category:      string
+  rendererColor: string
+  isLightSource?: boolean   // true → renderer treats as emissive
 }
 
-// Back-compat shape returned by resolveBlock() — consumed by layout engine + renderer
 export interface ResolvedBlock {
   blockId:    string
   blockState: BlockState
@@ -26,13 +19,66 @@ export interface ResolvedBlock {
 }
 
 // =============================================================================
-// Registry entries — extend this array to add new blocks
+// Luminax generator — 16 colors × 2 variants × 4 block types = 128 entries
+// =============================================================================
+
+const LUMINAX_COLORS: Array<{ name: string; bright: string; dim: string }> = [
+  { name: 'white',      bright: '#ffffff', dim: '#cccccc' },
+  { name: 'light_gray', bright: '#aaaaaa', dim: '#888888' },
+  { name: 'gray',       bright: '#888888', dim: '#555555' },
+  { name: 'black',      bright: '#404040', dim: '#222222' },
+  { name: 'brown',      bright: '#996633', dim: '#664422' },
+  { name: 'red',        bright: '#ff2020', dim: '#b81010' },
+  { name: 'orange',     bright: '#ff8800', dim: '#cc6600' },
+  { name: 'yellow',     bright: '#ffee00', dim: '#ccbb00' },
+  { name: 'lime',       bright: '#80ff00', dim: '#55bb00' },
+  { name: 'green',      bright: '#20cc20', dim: '#158815' },
+  { name: 'cyan',       bright: '#00ffee', dim: '#00b8a8' },
+  { name: 'light_blue', bright: '#80ccff', dim: '#5599cc' },
+  { name: 'blue',       bright: '#4040ff', dim: '#2828b8' },
+  { name: 'purple',     bright: '#cc00ff', dim: '#880099' },
+  { name: 'magenta',    bright: '#ff40cc', dim: '#cc2299' },
+  { name: 'pink',       bright: '#ff80bb', dim: '#cc5588' },
+]
+
+const LUMINAX_TYPES: Array<{ suffix: string; label: string }> = [
+  { suffix: '',        label: '' },
+  { suffix: '_slab',   label: ' Slab' },
+  { suffix: '_stairs', label: ' Stairs' },
+  { suffix: '_wall',   label: ' Wall' },
+]
+
+function generateLuminaxEntries(): RegistryEntry[] {
+  const out: RegistryEntry[] = []
+  for (const col of LUMINAX_COLORS) {
+    for (const variant of ['bright', 'dim'] as const) {
+      const color    = variant === 'bright' ? col.bright : col.dim
+      const category = variant === 'bright' ? 'luminax_bright' : 'luminax_dim'
+      const varLabel = variant === 'bright' ? 'Bright' : 'Dim'
+      for (const type of LUMINAX_TYPES) {
+        const colLabel = col.name.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+        out.push({
+          id:            `luminax_${col.name}_${variant}${type.suffix}`,
+          displayName:   `Luminax ${colLabel} ${varLabel}${type.label}`,
+          blockId:       `luminax:${col.name}_${variant}${type.suffix}`,
+          isFramed:      false,
+          category,
+          rendererColor: color,
+          isLightSource: true,
+        })
+      }
+    }
+  }
+  return out
+}
+
+// =============================================================================
+// Registry entries
 // =============================================================================
 
 export const REGISTRY_ENTRIES: RegistryEntry[] = [
 
   // ── vanilla_structural ───────────────────────────────────────────────────
-  // Abstract names used by the AI Design Brain must live here.
 
   { id: 'stone',                    displayName: 'Stone',                     blockId: 'minecraft:stone',                       isFramed: false, category: 'vanilla_structural', rendererColor: '#7f7f7f' },
   { id: 'stone_brick',              displayName: 'Stone Bricks',              blockId: 'minecraft:stone_bricks',                isFramed: false, category: 'vanilla_structural', rendererColor: '#787878' },
@@ -79,7 +125,6 @@ export const REGISTRY_ENTRIES: RegistryEntry[] = [
   { id: 'dark_oak_log',             displayName: 'Dark Oak Log',              blockId: 'minecraft:dark_oak_log',                isFramed: false, properties: { axis: 'y' }, category: 'vanilla_structural', rendererColor: '#2a1a10' },
   { id: 'terracotta',               displayName: 'Terracotta',                blockId: 'minecraft:terracotta',                  isFramed: false, category: 'vanilla_structural', rendererColor: '#985a3a' },
   { id: 'chain',                    displayName: 'Chain',                     blockId: 'minecraft:chain',                       isFramed: false, properties: { axis: 'y' }, category: 'vanilla_structural', rendererColor: '#606060' },
-  // compat aliases for Create blocks referenced without prefix
   { id: 'grate',                    displayName: 'Create Grate',              blockId: 'create:grate',                          isFramed: false, category: 'vanilla_structural', rendererColor: '#4a4a4a' },
   { id: 'copper_grate',             displayName: 'Create Copper Grate',       blockId: 'create:copper_grate',                   isFramed: false, category: 'vanilla_structural', rendererColor: '#7a4a2a' },
 
@@ -108,8 +153,25 @@ export const REGISTRY_ENTRIES: RegistryEntry[] = [
   { id: 'create_brass_casing',      displayName: 'Brass Machine Casing',      blockId: 'create:brass_machine_casing',           isFramed: false, category: 'create_mod', rendererColor: '#7a6a3a' },
   { id: 'create_copper_casing',     displayName: 'Copper Machine Casing',     blockId: 'create:copper_machine_casing',          isFramed: false, category: 'create_mod', rendererColor: '#7a4a2a' },
 
+  // ── create_extended ──────────────────────────────────────────────────────
+
+  { id: 'create_encased_fan',       displayName: 'Encased Fan',               blockId: 'create:encased_fan',                    isFramed: false, category: 'create_extended', rendererColor: '#7a6a5a' },
+  { id: 'create_mechanical_piston', displayName: 'Mechanical Piston',         blockId: 'create:mechanical_piston',              isFramed: false, category: 'create_extended', rendererColor: '#8a7a6a' },
+  { id: 'create_flywheel',          displayName: 'Flywheel',                  blockId: 'create:flywheel',                       isFramed: false, category: 'create_extended', rendererColor: '#9a8a7a' },
+  { id: 'create_cogwheel',          displayName: 'Cogwheel',                  blockId: 'create:cogwheel',                       isFramed: false, category: 'create_extended', rendererColor: '#8a7050' },
+  { id: 'create_large_cogwheel',    displayName: 'Large Cogwheel',            blockId: 'create:large_cogwheel',                 isFramed: false, category: 'create_extended', rendererColor: '#8a7050' },
+  { id: 'create_sail_frame',        displayName: 'Sail Frame',                blockId: 'create:sail_frame',                     isFramed: false, category: 'create_extended', rendererColor: '#c0b890' },
+  { id: 'create_track',             displayName: 'Track',                     blockId: 'create:track',                          isFramed: false, category: 'create_extended', rendererColor: '#7a6a5a' },
+  { id: 'create_display_link',      displayName: 'Display Link',              blockId: 'create:display_link',                   isFramed: false, category: 'create_extended', rendererColor: '#5a6878' },
+  { id: 'create_nixie_tube',        displayName: 'Nixie Tube',                blockId: 'create:nixie_tube',                     isFramed: false, category: 'create_extended', rendererColor: '#4060a0', isLightSource: true },
+  { id: 'create_item_drain',        displayName: 'Item Drain',                blockId: 'create:item_drain',                     isFramed: false, category: 'create_extended', rendererColor: '#6a7888' },
+  { id: 'create_spout',             displayName: 'Spout',                     blockId: 'create:spout',                          isFramed: false, category: 'create_extended', rendererColor: '#5a6878' },
+  { id: 'create_mechanical_arm',    displayName: 'Mechanical Arm',            blockId: 'create:mechanical_arm',                 isFramed: false, category: 'create_extended', rendererColor: '#8a7a6a' },
+  { id: 'create_rose_quartz_lamp',  displayName: 'Rose Quartz Lamp',          blockId: 'create:rose_quartz_lamp',               isFramed: false, category: 'create_extended', rendererColor: '#e080a0', isLightSource: true },
+  { id: 'create_chromatic_compound',displayName: 'Chromatic Compound',        blockId: 'create:chromatic_compound',             isFramed: false, category: 'create_extended', rendererColor: '#a060c0' },
+  { id: 'create_refined_radiance',  displayName: 'Refined Radiance',          blockId: 'create:refined_radiance',               isFramed: false, category: 'create_extended', rendererColor: '#f0f0e8', isLightSource: true },
+
   // ── framed_decorative ────────────────────────────────────────────────────
-  // Explicit framed entries take precedence over the framed_ prefix fallback.
 
   { id: 'framed_blackstone',        displayName: 'Framed Blackstone',         blockId: 'framed_blocks:framed_cube', isFramed: true, camoBlockId: 'minecraft:polished_blackstone_bricks', category: 'framed_decorative', rendererColor: '#252030' },
   { id: 'framed_deepslate',         displayName: 'Framed Deepslate',          blockId: 'framed_blocks:framed_cube', isFramed: true, camoBlockId: 'minecraft:deepslate_bricks',           category: 'framed_decorative', rendererColor: '#3a3a42' },
@@ -130,6 +192,19 @@ export const REGISTRY_ENTRIES: RegistryEntry[] = [
   { id: 'ie_sheetmetal_steel',      displayName: 'IE Steel Sheetmetal',       blockId: 'immersiveengineering:sheetmetal_steel',      isFramed: false, category: 'immersive_engineering', rendererColor: '#6a7888' },
   { id: 'ie_sheetmetal_aluminum',   displayName: 'IE Aluminum Sheetmetal',    blockId: 'immersiveengineering:sheetmetal_aluminum',   isFramed: false, category: 'immersive_engineering', rendererColor: '#8aabb8' },
 
+  // ── ie_extended ──────────────────────────────────────────────────────────
+
+  { id: 'ie_storage_copper',        displayName: 'IE Copper Block',           blockId: 'immersiveengineering:storage_copper',        isFramed: false, category: 'ie_extended', rendererColor: '#c87840' },
+  { id: 'ie_storage_silver',        displayName: 'IE Silver Block',           blockId: 'immersiveengineering:storage_silver',        isFramed: false, category: 'ie_extended', rendererColor: '#c0c8d0' },
+  { id: 'ie_storage_nickel',        displayName: 'IE Nickel Block',           blockId: 'immersiveengineering:storage_nickel',        isFramed: false, category: 'ie_extended', rendererColor: '#a8b098' },
+  { id: 'ie_concrete_tile',         displayName: 'IE Concrete Tile',          blockId: 'immersiveengineering:concrete_tile',         isFramed: false, category: 'ie_extended', rendererColor: '#888880' },
+  { id: 'ie_concrete_leaded',       displayName: 'IE Leaded Concrete',        blockId: 'immersiveengineering:concrete_leaded',       isFramed: false, category: 'ie_extended', rendererColor: '#7a7a72' },
+  { id: 'ie_hempcrete',             displayName: 'IE Hempcrete',              blockId: 'immersiveengineering:hempcrete',             isFramed: false, category: 'ie_extended', rendererColor: '#909878' },
+  { id: 'ie_engineering_light',     displayName: 'IE Engineering Light',      blockId: 'immersiveengineering:engineering_light',     isFramed: false, category: 'ie_extended', rendererColor: '#d0e0f0', isLightSource: true },
+  { id: 'ie_lantern',               displayName: 'IE Lantern',                blockId: 'immersiveengineering:lantern',               isFramed: false, category: 'ie_extended', rendererColor: '#d09030', isLightSource: true },
+  { id: 'ie_razor_wire',            displayName: 'IE Razor Wire',             blockId: 'immersiveengineering:razor_wire',            isFramed: false, category: 'ie_extended', rendererColor: '#9a9aaa' },
+  { id: 'ie_strip_curtain',         displayName: 'IE Strip Curtain',          blockId: 'immersiveengineering:strip_curtain',         isFramed: false, category: 'ie_extended', rendererColor: '#c0a840' },
+
   // ── mekanism ─────────────────────────────────────────────────────────────
 
   { id: 'mek_steel_casing',         displayName: 'Mek Steel Casing',          blockId: 'mekanism:steel_casing',                     isFramed: false, category: 'mekanism', rendererColor: '#5a6878' },
@@ -137,21 +212,48 @@ export const REGISTRY_ENTRIES: RegistryEntry[] = [
   { id: 'mek_hdpe',                 displayName: 'Mek HDPE Glass',            blockId: 'mekanism:hdpe_reinforced_glass',            isFramed: false, category: 'mekanism', rendererColor: '#a0c8d0' },
   { id: 'mek_teleporter_frame',     displayName: 'Mek Teleporter Frame',      blockId: 'mekanism:teleporter_frame',                 isFramed: false, category: 'mekanism', rendererColor: '#2a3a5a' },
 
+  // ── mekanism_extended ────────────────────────────────────────────────────
+
+  { id: 'mek_bronze_block',         displayName: 'Mek Bronze Block',          blockId: 'mekanism:bronze_block',                     isFramed: false, category: 'mekanism_extended', rendererColor: '#9a7030' },
+  { id: 'mek_osmium_block',         displayName: 'Mek Osmium Block',          blockId: 'mekanism:osmium_block',                     isFramed: false, category: 'mekanism_extended', rendererColor: '#5a7888' },
+  { id: 'mek_tin_block',            displayName: 'Mek Tin Block',             blockId: 'mekanism:tin_block',                        isFramed: false, category: 'mekanism_extended', rendererColor: '#a0b0b8' },
+  { id: 'mek_uranium_block',        displayName: 'Mek Uranium Block',         blockId: 'mekanism:uranium_block',                    isFramed: false, category: 'mekanism_extended', rendererColor: '#507840' },
+  { id: 'mek_fluorite_block',       displayName: 'Mek Fluorite Block',        blockId: 'mekanism:fluorite_block',                   isFramed: false, category: 'mekanism_extended', rendererColor: '#60a890' },
+  { id: 'mek_ultimate_casing',      displayName: 'Mek Ultimate Machine Casing', blockId: 'mekanism:ultimate_machine_casing',        isFramed: false, category: 'mekanism_extended', rendererColor: '#4a5878' },
+  { id: 'mek_reinforced_glass',     displayName: 'Mek Reinforced Glass',      blockId: 'mekanism:reinforced_glass',                 isFramed: false, category: 'mekanism_extended', rendererColor: '#a0c8d0' },
+  { id: 'mek_structural_glass',     displayName: 'Mek Structural Glass',      blockId: 'mekanism:structural_glass',                 isFramed: false, category: 'mekanism_extended', rendererColor: '#90b8c8' },
+  { id: 'mek_dynamic_glass',        displayName: 'Mek Dynamic Glass',         blockId: 'mekanism:dynamic_glass',                    isFramed: false, category: 'mekanism_extended', rendererColor: '#80a8c0' },
+
   // ── thermal ───────────────────────────────────────────────────────────────
 
   { id: 'thermal_machine_frame',    displayName: 'Thermal Machine Frame',     blockId: 'thermal:machine_frame',                     isFramed: false, category: 'thermal', rendererColor: '#7a6a3a' },
   { id: 'thermal_rockwool',         displayName: 'Thermal Rockwool',          blockId: 'thermal:rockwool',                          isFramed: false, category: 'thermal', rendererColor: '#8a7a6a' },
   { id: 'thermal_duct',             displayName: 'Thermal Duct',              blockId: 'thermal:duct',                              isFramed: false, category: 'thermal', rendererColor: '#6a5a4a' },
 
+  // ── thermal_extended ─────────────────────────────────────────────────────
+
+  { id: 'thermal_tin_block',        displayName: 'Thermal Tin Block',         blockId: 'thermal:tin_block',                         isFramed: false, category: 'thermal_extended', rendererColor: '#a0b0b8' },
+  { id: 'thermal_lead_block',       displayName: 'Thermal Lead Block',        blockId: 'thermal:lead_block',                        isFramed: false, category: 'thermal_extended', rendererColor: '#5a5a6a' },
+  { id: 'thermal_silver_block',     displayName: 'Thermal Silver Block',      blockId: 'thermal:silver_block',                      isFramed: false, category: 'thermal_extended', rendererColor: '#c0c8d0' },
+  { id: 'thermal_nickel_block',     displayName: 'Thermal Nickel Block',      blockId: 'thermal:nickel_block',                      isFramed: false, category: 'thermal_extended', rendererColor: '#a8b098' },
+  { id: 'thermal_platinum_block',   displayName: 'Thermal Platinum Block',    blockId: 'thermal:platinum_block',                    isFramed: false, category: 'thermal_extended', rendererColor: '#c0d0e0' },
+  { id: 'thermal_enderium_block',   displayName: 'Thermal Enderium Block',    blockId: 'thermal:enderium_block',                    isFramed: false, category: 'thermal_extended', rendererColor: '#308080' },
+  { id: 'thermal_lumium_block',     displayName: 'Thermal Lumium Block',      blockId: 'thermal:lumium_block',                      isFramed: false, category: 'thermal_extended', rendererColor: '#d0c040', isLightSource: true },
+  { id: 'thermal_signalum_block',   displayName: 'Thermal Signalum Block',    blockId: 'thermal:signalum_block',                    isFramed: false, category: 'thermal_extended', rendererColor: '#c04020' },
+  { id: 'thermal_pyrotheum',        displayName: 'Blazing Pyrotheum',         blockId: 'thermal:blazing_pyrotheum',                 isFramed: false, category: 'thermal_extended', rendererColor: '#e06020', isLightSource: true },
+  { id: 'thermal_cryotheum',        displayName: 'Gelidium Cryotheum',        blockId: 'thermal:gelidium_cryotheum',                isFramed: false, category: 'thermal_extended', rendererColor: '#40a0c0', isLightSource: true },
+  { id: 'thermal_aerotheum',        displayName: 'Aerotheum',                 blockId: 'thermal:aerotheum',                         isFramed: false, category: 'thermal_extended', rendererColor: '#80c0e0' },
+  { id: 'thermal_petrotheum',       displayName: 'Petrotheum',                blockId: 'thermal:petrotheum',                        isFramed: false, category: 'thermal_extended', rendererColor: '#404840' },
+
   // ── lighting ─────────────────────────────────────────────────────────────
 
-  { id: 'lantern',                  displayName: 'Lantern',                   blockId: 'minecraft:lantern',                         isFramed: false, properties: { hanging: 'false' }, category: 'lighting', rendererColor: '#d0a040' },
-  { id: 'soul_lantern',             displayName: 'Soul Lantern',              blockId: 'minecraft:soul_lantern',                    isFramed: false, properties: { hanging: 'false' }, category: 'lighting', rendererColor: '#40a0d0' },
-  { id: 'sea_lantern',              displayName: 'Sea Lantern',               blockId: 'minecraft:sea_lantern',                     isFramed: false, category: 'lighting', rendererColor: '#a0c8cc' },
-  { id: 'glowstone',                displayName: 'Glowstone',                 blockId: 'minecraft:glowstone',                       isFramed: false, category: 'lighting', rendererColor: '#e0c060' },
-  { id: 'shroomlight',              displayName: 'Shroomlight',               blockId: 'minecraft:shroomlight',                     isFramed: false, category: 'lighting', rendererColor: '#e09040' },
-  { id: 'end_rod',                  displayName: 'End Rod',                   blockId: 'minecraft:end_rod',                         isFramed: false, properties: { facing: 'up' }, category: 'lighting', rendererColor: '#f0f0e0' },
-  { id: 'create_blaze_lantern',     displayName: 'Create Blaze Lantern',      blockId: 'create:blaze_lantern',                      isFramed: false, category: 'lighting', rendererColor: '#e06020' },
+  { id: 'lantern',                  displayName: 'Lantern',                   blockId: 'minecraft:lantern',                         isFramed: false, properties: { hanging: 'false' }, category: 'lighting', rendererColor: '#d0a040', isLightSource: true },
+  { id: 'soul_lantern',             displayName: 'Soul Lantern',              blockId: 'minecraft:soul_lantern',                    isFramed: false, properties: { hanging: 'false' }, category: 'lighting', rendererColor: '#40a0d0', isLightSource: true },
+  { id: 'sea_lantern',              displayName: 'Sea Lantern',               blockId: 'minecraft:sea_lantern',                     isFramed: false, category: 'lighting', rendererColor: '#a0c8cc', isLightSource: true },
+  { id: 'glowstone',                displayName: 'Glowstone',                 blockId: 'minecraft:glowstone',                       isFramed: false, category: 'lighting', rendererColor: '#e0c060', isLightSource: true },
+  { id: 'shroomlight',              displayName: 'Shroomlight',               blockId: 'minecraft:shroomlight',                     isFramed: false, category: 'lighting', rendererColor: '#e09040', isLightSource: true },
+  { id: 'end_rod',                  displayName: 'End Rod',                   blockId: 'minecraft:end_rod',                         isFramed: false, properties: { facing: 'up' }, category: 'lighting', rendererColor: '#f0f0e0', isLightSource: true },
+  { id: 'create_blaze_lantern',     displayName: 'Create Blaze Lantern',      blockId: 'create:blaze_lantern',                      isFramed: false, category: 'lighting', rendererColor: '#e06020', isLightSource: true },
 
   // ── accent_glass ─────────────────────────────────────────────────────────
 
@@ -160,27 +262,150 @@ export const REGISTRY_ENTRIES: RegistryEntry[] = [
   { id: 'purple_glass',             displayName: 'Purple Stained Glass',      blockId: 'minecraft:purple_stained_glass',            isFramed: false, category: 'accent_glass', rendererColor: '#8020a0' },
   { id: 'blue_glass',               displayName: 'Blue Stained Glass',        blockId: 'minecraft:blue_stained_glass',              isFramed: false, category: 'accent_glass', rendererColor: '#2040b0' },
   { id: 'create_framed_glass',      displayName: 'Create Framed Glass',       blockId: 'create:framed_glass',                       isFramed: false, category: 'accent_glass', rendererColor: '#d0e8f0' },
+
+  // ── ae2 ──────────────────────────────────────────────────────────────────
+
+  { id: 'ae2_quartz_block',         displayName: 'AE2 Quartz Block',          blockId: 'ae2:quartz_block',                          isFramed: false, category: 'ae2', rendererColor: '#d0c8e8' },
+  { id: 'ae2_fluix_block',          displayName: 'AE2 Fluix Block',           blockId: 'ae2:fluix_block',                           isFramed: false, category: 'ae2', rendererColor: '#9070c0' },
+  { id: 'ae2_sky_stone_block',      displayName: 'AE2 Sky Stone',             blockId: 'ae2:sky_stone_block',                       isFramed: false, category: 'ae2', rendererColor: '#4a4a52' },
+  { id: 'ae2_sky_stone_brick',      displayName: 'AE2 Sky Stone Brick',       blockId: 'ae2:sky_stone_brick',                       isFramed: false, category: 'ae2', rendererColor: '#525260' },
+  { id: 'ae2_sky_stone_small_brick',displayName: 'AE2 Sky Stone Small Brick', blockId: 'ae2:sky_stone_small_brick',                 isFramed: false, category: 'ae2', rendererColor: '#484856' },
+  { id: 'ae2_quartz_glass',         displayName: 'AE2 Quartz Glass',          blockId: 'ae2:quartz_glass',                          isFramed: false, category: 'ae2', rendererColor: '#c0b8e0' },
+  { id: 'ae2_fluix_glass',          displayName: 'AE2 Fluix Glass',           blockId: 'ae2:fluix_glass',                           isFramed: false, category: 'ae2', rendererColor: '#a080d0' },
+  { id: 'ae2_me_chest',             displayName: 'AE2 ME Chest',              blockId: 'ae2:me_chest',                              isFramed: false, category: 'ae2', rendererColor: '#304878' },
+  { id: 'ae2_controller',           displayName: 'AE2 ME Controller',         blockId: 'ae2:controller',                            isFramed: false, category: 'ae2', rendererColor: '#203060', isLightSource: true },
+  { id: 'ae2_drive',                displayName: 'AE2 ME Drive',              blockId: 'ae2:drive',                                 isFramed: false, category: 'ae2', rendererColor: '#284070' },
+  { id: 'ae2_energy_acceptor',      displayName: 'AE2 Energy Acceptor',       blockId: 'ae2:energy_acceptor',                       isFramed: false, category: 'ae2', rendererColor: '#204060' },
+  { id: 'ae2_crafting_unit',        displayName: 'AE2 Crafting Unit',         blockId: 'ae2:crafting_unit',                         isFramed: false, category: 'ae2', rendererColor: '#283850' },
+
+  // ── powah ─────────────────────────────────────────────────────────────────
+
+  { id: 'powah_thermo_generator',   displayName: 'Powah Thermo Generator',    blockId: 'powah:thermo_generator_basic',              isFramed: false, category: 'powah', rendererColor: '#c04020' },
+  { id: 'powah_energizing_orb',     displayName: 'Powah Energizing Orb',      blockId: 'powah:energizing_orb',                      isFramed: false, category: 'powah', rendererColor: '#4060c0', isLightSource: true },
+  { id: 'powah_dielectric_casing',  displayName: 'Powah Dielectric Casing',   blockId: 'powah:dielectric_casing',                   isFramed: false, category: 'powah', rendererColor: '#5a6878' },
+  { id: 'powah_crystal_blazing',    displayName: 'Powah Blazing Crystal',     blockId: 'powah:crystal_block_blazing',               isFramed: false, category: 'powah', rendererColor: '#e06020', isLightSource: true },
+  { id: 'powah_crystal_niotic',     displayName: 'Powah Niotic Crystal',      blockId: 'powah:crystal_block_niotic',                isFramed: false, category: 'powah', rendererColor: '#4080c0', isLightSource: true },
+  { id: 'powah_crystal_spirited',   displayName: 'Powah Spirited Crystal',    blockId: 'powah:crystal_block_spirited',              isFramed: false, category: 'powah', rendererColor: '#80c040', isLightSource: true },
+  { id: 'powah_crystal_nitro',      displayName: 'Powah Nitro Crystal',       blockId: 'powah:crystal_block_nitro',                 isFramed: false, category: 'powah', rendererColor: '#c04080', isLightSource: true },
+
+  // ── botania ───────────────────────────────────────────────────────────────
+
+  { id: 'botania_livingrock',       displayName: 'Botania Livingrock',        blockId: 'botania:livingrock',                        isFramed: false, category: 'botania', rendererColor: '#c0b8a8' },
+  { id: 'botania_livingrock_brick', displayName: 'Botania Livingrock Brick',  blockId: 'botania:livingrock_brick',                  isFramed: false, category: 'botania', rendererColor: '#b8a898' },
+  { id: 'botania_shimmerrock',      displayName: 'Botania Shimmerrock',       blockId: 'botania:shimmerrock',                       isFramed: false, category: 'botania', rendererColor: '#c8c0e0' },
+  { id: 'botania_livingwood_log',   displayName: 'Botania Livingwood',        blockId: 'botania:livingwood_log',                    isFramed: false, category: 'botania', rendererColor: '#7a6a4a' },
+  { id: 'botania_dreamwood_log',    displayName: 'Botania Dreamwood',         blockId: 'botania:dreamwood_log',                     isFramed: false, category: 'botania', rendererColor: '#c8b8d8' },
+  { id: 'botania_mana_glass',       displayName: 'Botania Mana Glass',        blockId: 'botania:mana_glass',                        isFramed: false, category: 'botania', rendererColor: '#80a0ff', isLightSource: true },
+  { id: 'botania_elfglass',         displayName: 'Botania Elf Glass',         blockId: 'botania:elfglass',                          isFramed: false, category: 'botania', rendererColor: '#80ffa0', isLightSource: true },
+  { id: 'botania_bifrost_block',    displayName: 'Botania Bifrost',           blockId: 'botania:bifrost_block',                     isFramed: false, category: 'botania', rendererColor: '#a0e0ff', isLightSource: true },
+  { id: 'botania_starfield',        displayName: 'Botania Starfield Creator', blockId: 'botania:starfield_creator',                 isFramed: false, category: 'botania', rendererColor: '#202840' },
+
+  // ── occultism ─────────────────────────────────────────────────────────────
+
+  { id: 'occultism_otherstone',     displayName: 'Occultism Otherstone',      blockId: 'occultism:otherstone',                      isFramed: false, category: 'occultism', rendererColor: '#3a3248' },
+  { id: 'occultism_otherstone_brick',displayName: 'Occultism Otherstone Brick',blockId: 'occultism:otherstone_brick',              isFramed: false, category: 'occultism', rendererColor: '#423850' },
+  { id: 'occultism_silver_block',   displayName: 'Occultism Silver Block',    blockId: 'occultism:silver_block',                    isFramed: false, category: 'occultism', rendererColor: '#c0c8d0' },
+  { id: 'occultism_iesnium_block',  displayName: 'Occultism Iesnium Block',   blockId: 'occultism:iesnium_block',                   isFramed: false, category: 'occultism', rendererColor: '#504868' },
+  { id: 'occultism_spirit_lantern', displayName: 'Occultism Spirit Lantern',  blockId: 'occultism:spirit_lantern',                  isFramed: false, category: 'occultism', rendererColor: '#8060c0', isLightSource: true },
+
+  // ── supplementaries ──────────────────────────────────────────────────────
+
+  { id: 'supplementaries_flag',     displayName: 'Supplementaries Flag',      blockId: 'supplementaries:flag',                      isFramed: false, category: 'supplementaries', rendererColor: '#8a7a6a' },
+  { id: 'supplementaries_sign_post',displayName: 'Supplementaries Sign Post', blockId: 'supplementaries:sign_post',                 isFramed: false, category: 'supplementaries', rendererColor: '#7a6a4a' },
+  { id: 'supplementaries_rope',     displayName: 'Supplementaries Rope',      blockId: 'supplementaries:rope',                      isFramed: false, category: 'supplementaries', rendererColor: '#8a7040' },
+  { id: 'supplementaries_lantern',  displayName: 'Supplementaries Lantern',   blockId: 'supplementaries:lantern',                   isFramed: false, category: 'supplementaries', rendererColor: '#d0a040', isLightSource: true },
+  { id: 'supplementaries_jar',      displayName: 'Supplementaries Jar',       blockId: 'supplementaries:jar',                       isFramed: false, category: 'supplementaries', rendererColor: '#c0d8e0' },
+  { id: 'supplementaries_notice_board',displayName: 'Supplementaries Notice Board', blockId: 'supplementaries:notice_board',       isFramed: false, category: 'supplementaries', rendererColor: '#9a7a5a' },
+  { id: 'supplementaries_sconce',   displayName: 'Supplementaries Sconce',    blockId: 'supplementaries:sconce',                    isFramed: false, category: 'supplementaries', rendererColor: '#c08030', isLightSource: true },
+
+  // ── macaws ───────────────────────────────────────────────────────────────
+
+  { id: 'mcwfurnitures_oak_table',  displayName: "Macaw's Oak Table",         blockId: 'mcwfurnitures:oak_table',                   isFramed: false, category: 'macaws', rendererColor: '#8a6a4a' },
+  { id: 'mcwfurnitures_iron_table', displayName: "Macaw's Iron Table",        blockId: 'mcwfurnitures:iron_table',                  isFramed: false, category: 'macaws', rendererColor: '#9a9aaa' },
+  { id: 'mcwfurnitures_steel_table',displayName: "Macaw's Steel Table",       blockId: 'mcwfurnitures:steel_table',                 isFramed: false, category: 'macaws', rendererColor: '#7a8a9a' },
+  { id: 'mcwfurnitures_oak_cabinet',displayName: "Macaw's Oak Cabinet",       blockId: 'mcwfurnitures:oak_cabinet',                 isFramed: false, category: 'macaws', rendererColor: '#7a5a3a' },
+  { id: 'mcwfurnitures_iron_shelf', displayName: "Macaw's Iron Shelf",        blockId: 'mcwfurnitures:iron_shelf',                  isFramed: false, category: 'macaws', rendererColor: '#8a9aaa' },
+  { id: 'mcwwindows_oak_window',    displayName: "Macaw's Oak Window",        blockId: 'mcwwindows:oak_window',                     isFramed: false, category: 'macaws', rendererColor: '#c8b090' },
+  { id: 'mcwwindows_iron_window',   displayName: "Macaw's Iron Window",       blockId: 'mcwwindows:iron_window',                    isFramed: false, category: 'macaws', rendererColor: '#9a9aaa' },
+  { id: 'mcwwindows_steel_window',  displayName: "Macaw's Steel Window",      blockId: 'mcwwindows:steel_window',                   isFramed: false, category: 'macaws', rendererColor: '#8a9aaa' },
+  { id: 'mcwwindows_framed_window', displayName: "Macaw's Framed Window",     blockId: 'mcwwindows:framed_window',                  isFramed: false, category: 'macaws', rendererColor: '#c0d8e0' },
+  { id: 'mcwdoors_iron_door',       displayName: "Macaw's Iron Door",         blockId: 'mcwdoors:iron_door',                        isFramed: false, category: 'macaws', rendererColor: '#aaaaaa' },
+  { id: 'mcwdoors_steel_door',      displayName: "Macaw's Steel Door",        blockId: 'mcwdoors:steel_door',                       isFramed: false, category: 'macaws', rendererColor: '#8a9aaa' },
+  { id: 'mcwdoors_glass_door',      displayName: "Macaw's Glass Door",        blockId: 'mcwdoors:glass_door',                       isFramed: false, category: 'macaws', rendererColor: '#c0d8e0' },
+
+  // ── chipped ───────────────────────────────────────────────────────────────
+
+  { id: 'chipped_alchemist_bookshelf', displayName: 'Chipped Alchemist Bookshelf', blockId: 'chipped:alchemist_bookshelf',         isFramed: false, category: 'chipped', rendererColor: '#7a5a3a' },
+  { id: 'chipped_framed_stone',     displayName: 'Chipped Framed Stone',      blockId: 'chipped:framed_stone',                      isFramed: false, category: 'chipped', rendererColor: '#8a8a8a' },
+  { id: 'chipped_mossy_stone_bricks',displayName: 'Chipped Mossy Stone Bricks',blockId: 'chipped:mossy_stone_bricks',              isFramed: false, category: 'chipped', rendererColor: '#6a7a5a' },
+  { id: 'chipped_cracked_deepslate',displayName: 'Chipped Cracked Deepslate', blockId: 'chipped:cracked_deepslate',                 isFramed: false, category: 'chipped', rendererColor: '#3a3a42' },
+  { id: 'chipped_smooth_basalt_bricks',displayName: 'Chipped Smooth Basalt Bricks', blockId: 'chipped:smooth_basalt_bricks',       isFramed: false, category: 'chipped', rendererColor: '#3a3a3a' },
+  { id: 'chipped_polished_deepslate_bricks',displayName: 'Chipped Polished Deepslate Bricks', blockId: 'chipped:polished_deepslate_bricks', isFramed: false, category: 'chipped', rendererColor: '#2e2e38' },
+  { id: 'chipped_gilded_deepslate', displayName: 'Chipped Gilded Deepslate',  blockId: 'chipped:gilded_deepslate',                  isFramed: false, category: 'chipped', rendererColor: '#3a3020' },
+  { id: 'chipped_etched_copper',    displayName: 'Chipped Etched Copper',     blockId: 'chipped:etched_copper',                     isFramed: false, category: 'chipped', rendererColor: '#7a5a3a' },
+  { id: 'chipped_corroded_copper',  displayName: 'Chipped Corroded Copper',   blockId: 'chipped:corroded_copper',                   isFramed: false, category: 'chipped', rendererColor: '#4a7a5a' },
+  { id: 'chipped_bronze_bricks',    displayName: 'Chipped Bronze Bricks',     blockId: 'chipped:bronze_bricks',                     isFramed: false, category: 'chipped', rendererColor: '#8a6a3a' },
+  { id: 'chipped_rusted_iron',      displayName: 'Chipped Rusted Iron',       blockId: 'chipped:rusted_iron',                       isFramed: false, category: 'chipped', rendererColor: '#7a4a3a' },
+  { id: 'chipped_steel_bricks',     displayName: 'Chipped Steel Bricks',      blockId: 'chipped:steel_bricks',                      isFramed: false, category: 'chipped', rendererColor: '#5a6878' },
+
+  // ── decorative_blocks ────────────────────────────────────────────────────
+
+  { id: 'decorative_rocky_dirt',    displayName: 'Rocky Dirt',                blockId: 'decorative_blocks:rocky_dirt',              isFramed: false, category: 'decorative_blocks', rendererColor: '#6a5a3a' },
+  { id: 'decorative_cave_moss',     displayName: 'Cave Moss',                 blockId: 'decorative_blocks:cave_moss',               isFramed: false, category: 'decorative_blocks', rendererColor: '#4a6a3a' },
+  { id: 'decorative_bonfire',       displayName: 'Bonfire',                   blockId: 'decorative_blocks:bonfire',                 isFramed: false, category: 'decorative_blocks', rendererColor: '#e06020', isLightSource: true },
+  { id: 'decorative_chandelier',    displayName: 'Chandelier',                blockId: 'decorative_blocks:chandelier',              isFramed: false, category: 'decorative_blocks', rendererColor: '#d0a040', isLightSource: true },
+  { id: 'decorative_chain',         displayName: 'Decorative Chain',          blockId: 'decorative_blocks:chain',                   isFramed: false, category: 'decorative_blocks', rendererColor: '#8a8a9a' },
+  { id: 'decorative_brazier',       displayName: 'Brazier',                   blockId: 'decorative_blocks:brazier',                 isFramed: false, category: 'decorative_blocks', rendererColor: '#c06020', isLightSource: true },
+  { id: 'decorative_wall_lantern',  displayName: 'Wall Lantern',              blockId: 'decorative_blocks:wall_lantern',            isFramed: false, category: 'decorative_blocks', rendererColor: '#d09030', isLightSource: true },
+  { id: 'decorative_iron_lattice',  displayName: 'Iron Lattice',              blockId: 'decorative_blocks:iron_lattice',            isFramed: false, category: 'decorative_blocks', rendererColor: '#7a7a8a' },
+  { id: 'decorative_paper_wall',    displayName: 'Paper Wall',                blockId: 'decorative_blocks:paper_wall',              isFramed: false, category: 'decorative_blocks', rendererColor: '#e0d8c0' },
+  { id: 'decorative_support',       displayName: 'Support',                   blockId: 'decorative_blocks:support',                 isFramed: false, category: 'decorative_blocks', rendererColor: '#8a7a5a' },
+  { id: 'decorative_hedge',         displayName: 'Hedge',                     blockId: 'decorative_blocks:hedge',                   isFramed: false, category: 'decorative_blocks', rendererColor: '#3a6a2a' },
+  { id: 'decorative_thatch',        displayName: 'Thatch',                    blockId: 'decorative_blocks:thatch',                  isFramed: false, category: 'decorative_blocks', rendererColor: '#c0a040' },
+
+  // ── utility_decorative ───────────────────────────────────────────────────
+
+  { id: 'dark_utilities_ender_hopper', displayName: 'Dark Utilities Ender Hopper', blockId: 'dark_utilities:ender_hopper',         isFramed: false, category: 'utility_decorative', rendererColor: '#2a0a3a' },
+  { id: 'dark_utilities_filter_block', displayName: 'Dark Utilities Filter Block', blockId: 'dark_utilities:filter_block',         isFramed: false, category: 'utility_decorative', rendererColor: '#3a5a3a' },
+
+  // ── storage ───────────────────────────────────────────────────────────────
+
+  { id: 'storagedrawers_oak_drawers',  displayName: 'Storage Drawers Oak (1x)',  blockId: 'storagedrawers:oak_full_drawers_1',    isFramed: false, category: 'storage', rendererColor: '#9a7a4a' },
+  { id: 'storagedrawers_iron_drawers', displayName: 'Storage Drawers Iron (1x)', blockId: 'storagedrawers:iron_full_drawers_1',   isFramed: false, category: 'storage', rendererColor: '#8a9aaa' },
+  { id: 'storagedrawers_trim',         displayName: 'Storage Drawers Trim',      blockId: 'storagedrawers:trim',                  isFramed: false, category: 'storage', rendererColor: '#7a6a5a' },
+
+  // ── generated Luminax entries (128 blocks) ───────────────────────────────
+  ...generateLuminaxEntries(),
 ]
 
 // =============================================================================
-// Internal lookup maps (built at module load)
+// Internal lookup maps
 // =============================================================================
 
-// First-wins: primary definitions (earlier in the array) take precedence over aliases.
 const ENTRY_MAP = new Map<string, RegistryEntry>()
 for (const entry of REGISTRY_ENTRIES) {
   if (!ENTRY_MAP.has(entry.id)) ENTRY_MAP.set(entry.id, entry)
 }
 
-// Category → entries, preserving insertion order
 const CATEGORY_MAP = new Map<string, RegistryEntry[]>()
 for (const entry of REGISTRY_ENTRIES) {
   if (!CATEGORY_MAP.has(entry.category)) CATEGORY_MAP.set(entry.category, [])
   CATEGORY_MAP.get(entry.category)!.push(entry)
 }
 
+interface BlockMeta { rendererColor: string; isLightSource: boolean }
+const BLOCKID_META_MAP = new Map<string, BlockMeta>()
+for (const entry of REGISTRY_ENTRIES) {
+  if (!entry.isFramed && !BLOCKID_META_MAP.has(entry.blockId)) {
+    BLOCKID_META_MAP.set(entry.blockId, {
+      rendererColor: entry.rendererColor,
+      isLightSource: entry.isLightSource ?? false,
+    })
+  }
+}
+
 // =============================================================================
-// Public query helpers (for UI dropdowns, palette editors, etc.)
+// Public query helpers
 // =============================================================================
 
 export function getAllEntries(): RegistryEntry[] {
@@ -196,7 +421,7 @@ export function findEntryById(id: string): RegistryEntry | undefined {
 }
 
 // =============================================================================
-// Core: resolve an abstract material name → ResolvedBlock for the layout engine
+// Core: resolve an abstract material name → ResolvedBlock
 // =============================================================================
 
 const FRAMED_BLOCK_ID = 'framed_blocks:framed_cube'
@@ -223,31 +448,18 @@ function entryToResolved(entry: RegistryEntry): ResolvedBlock {
   }
 }
 
-/**
- * Resolve an abstract material name to a ResolvedBlock.
- *
- * Resolution order:
- *  1. Namespaced IDs (contain ':') → returned verbatim
- *  2. Explicit ENTRY_MAP hit → resolved via entry (handles isFramed entries too)
- *  3. 'framed_<x>' with no explicit entry → prefix logic: look up <x> for the camo
- *  4. Unknown → console.warn + minecraft:stone_bricks fallback
- */
 export function resolveBlock(name: string | undefined | null): ResolvedBlock {
   if (!name) return { ...DEFAULT_RESOLVED }
   const trimmed = name.trim()
 
-  // 1. Namespaced passthrough
   if (trimmed.includes(':')) {
     return { blockId: trimmed, blockState: {} }
   }
 
   const key = normalizeKey(trimmed)
-
-  // 2. Explicit registry entry (covers both regular and isFramed entries)
   const entry = ENTRY_MAP.get(key)
   if (entry) return entryToResolved(entry)
 
-  // 3. Implicit framed prefix: 'framed_<material>' where no explicit entry exists
   if (key.startsWith('framed_')) {
     const camoKey = key.slice('framed_'.length)
     const camoEntry = ENTRY_MAP.get(camoKey)
@@ -266,13 +478,12 @@ export function resolveBlock(name: string | undefined | null): ResolvedBlock {
     }
   }
 
-  // 4. Unknown
   console.warn(`[blockRegistry] unknown material '${name}', falling back to minecraft:stone_bricks`)
   return { ...DEFAULT_RESOLVED }
 }
 
 // =============================================================================
-// Utility helpers (unchanged interface)
+// Utility helpers
 // =============================================================================
 
 const SOFT_FALLBACK: Record<string, string> = {
@@ -302,12 +513,10 @@ const SOFT_FALLBACK: Record<string, string> = {
   'thermal:duct':                   'minecraft:iron_bars',
 }
 
-/** Returns a vanilla fallback for a mod block ID, or the original ID if no fallback applies. */
 export function softFallback(blockId: string): string {
   return SOFT_FALLBACK[blockId] ?? blockId
 }
 
-/** Maps a base wall block ID to its stair variant. Returns null if none mapped. */
 export function stairsForBase(baseBlockId: string): string | null {
   const m: Record<string, string> = {
     'minecraft:stone_bricks':                 'minecraft:stone_brick_stairs',
@@ -332,7 +541,6 @@ export function stairsForBase(baseBlockId: string): string | null {
   return m[baseBlockId] ?? null
 }
 
-/** Extract the camo block ID from a framed-block tile entity's NBT. */
 export function getCamoBlockId(nbtData: Record<string, unknown> | undefined): string | null {
   if (!nbtData) return null
   const camo = nbtData['CamoState'] as { Name?: unknown } | undefined
@@ -344,18 +552,45 @@ export const FRAMED_CUBE_BLOCK_ID = FRAMED_BLOCK_ID
 export const UTILITY_GAP_BLOCK_ID = 'minecraft:smooth_stone_slab'
 
 // =============================================================================
-// Renderer color lookup by blockId (for non-framed blocks)
+// Renderer color / meta lookup by blockId
 // =============================================================================
 
-// blockId → rendererColor, first-wins, framed entries excluded (color depends on camo)
-const BLOCKID_COLOR_MAP = new Map<string, string>()
-for (const entry of REGISTRY_ENTRIES) {
-  if (!entry.isFramed && !BLOCKID_COLOR_MAP.has(entry.blockId)) {
-    BLOCKID_COLOR_MAP.set(entry.blockId, entry.rendererColor)
-  }
+export function getRendererColorByBlockId(blockId: string): string | undefined {
+  return BLOCKID_META_MAP.get(blockId)?.rendererColor
 }
 
-/** Returns the registry's rendererColor for a given blockId, or undefined if not found. */
-export function getRendererColorByBlockId(blockId: string): string | undefined {
-  return BLOCKID_COLOR_MAP.get(blockId)
+export function getBlockMeta(blockId: string): BlockMeta | undefined {
+  return BLOCKID_META_MAP.get(blockId)
+}
+
+// =============================================================================
+// Runtime custom registry loader (Node.js server-side only)
+// =============================================================================
+
+/**
+ * Merges a user-provided JSON file (array of RegistryEntry) into the live
+ * registry at startup. Silently skips if the file is absent or malformed.
+ * No-op in browser environments.
+ */
+export async function loadCustomRegistry(filePath: string): Promise<void> {
+  if (typeof window !== 'undefined') return
+  try {
+    const { readFileSync } = await import('fs')
+    const raw = readFileSync(filePath, 'utf-8')
+    const custom = JSON.parse(raw) as RegistryEntry[]
+    for (const entry of custom) {
+      REGISTRY_ENTRIES.push(entry)
+      if (!ENTRY_MAP.has(entry.id)) ENTRY_MAP.set(entry.id, entry)
+      if (!CATEGORY_MAP.has(entry.category)) CATEGORY_MAP.set(entry.category, [])
+      CATEGORY_MAP.get(entry.category)!.push(entry)
+      if (!entry.isFramed && !BLOCKID_META_MAP.has(entry.blockId)) {
+        BLOCKID_META_MAP.set(entry.blockId, {
+          rendererColor: entry.rendererColor,
+          isLightSource: entry.isLightSource ?? false,
+        })
+      }
+    }
+  } catch {
+    // File absent, unreadable, or malformed — no-op
+  }
 }

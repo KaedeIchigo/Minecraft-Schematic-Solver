@@ -18,6 +18,42 @@ const PALETTE_SLOTS: Array<{ key: keyof BlueprintMaterialPalette; label: string 
   { key: 'frame_material', label: 'Frame Material' },
 ]
 
+const PRESETS: Array<{ label: string; palette: Partial<BlueprintMaterialPalette> }> = [
+  {
+    label: 'Futuristic / Sci-Fi',
+    palette: {
+      primary_wall:   'luminax_black_bright',
+      secondary_wall: 'ae2_sky_stone_brick',
+      floor:          'mek_ultimate_casing',
+      ceiling:        'luminax_black_dim',
+      accent:         'luminax_cyan_bright',
+      frame_material: 'create_industrial_iron',
+    },
+  },
+  {
+    label: 'Dark Industrial',
+    palette: {
+      primary_wall:   'chipped_smooth_basalt_bricks',
+      secondary_wall: 'ie_sheetmetal_steel',
+      floor:          'deepslate_tile',
+      ceiling:        'luminax_black_dim',
+      accent:         'luminax_orange_dim',
+      frame_material: 'create_andesite_casing',
+    },
+  },
+  {
+    label: 'Arcane / Mystical',
+    palette: {
+      primary_wall:   'occultism_otherstone_brick',
+      secondary_wall: 'botania_shimmerrock',
+      floor:          'botania_livingrock_brick',
+      ceiling:        'luminax_purple_dim',
+      accent:         'botania_mana_glass',
+      frame_material: 'ae2_fluix_block',
+    },
+  },
+]
+
 function BlockTemplatesPanel({
   palette, overrides, search, onSearchChange, onChange, onReset,
 }: {
@@ -28,70 +64,119 @@ function BlockTemplatesPanel({
   onChange: (overrides: Partial<BlueprintMaterialPalette>) => void
   onReset: () => void
 }) {
+  const [selectedCategory, setSelectedCategory] = useState<string | null>(null)
   const categoryMap = useMemo(() => getEntriesByCategory(), [])
-  const allEntries = useMemo(() => {
-    const entries = Array.from(categoryMap.values()).flat()
-    if (!search.trim()) return entries
+  const categories  = useMemo(() => Array.from(categoryMap.keys()), [categoryMap])
+
+  const filteredEntries = useMemo(() => {
+    const base = selectedCategory
+      ? (categoryMap.get(selectedCategory) ?? [])
+      : Array.from(categoryMap.values()).flat()
+    if (!search.trim()) return base
     const q = search.toLowerCase()
-    return entries.filter(e =>
+    return base.filter(e =>
       e.displayName.toLowerCase().includes(q) ||
       e.id.toLowerCase().includes(q) ||
       e.blockId.toLowerCase().includes(q)
     )
-  }, [categoryMap, search])
+  }, [categoryMap, selectedCategory, search])
 
   function setSlot(key: keyof BlueprintMaterialPalette, value: string) {
     onChange({ ...overrides, [key]: value })
   }
 
+  function applyPreset(preset: Partial<BlueprintMaterialPalette>) {
+    onChange({ ...overrides, ...preset })
+  }
+
   return (
     <div className="space-y-3">
-      <div className="flex items-center gap-2">
-        <input
-          value={search}
-          onChange={e => onSearchChange(e.target.value)}
-          placeholder="Search blocks…"
-          className="flex-1 bg-gray-800 border border-gray-700 text-white text-xs px-2 py-1.5 rounded font-mono outline-none focus:border-blue-500"
-        />
+      {/* Preset buttons */}
+      <div className="flex flex-wrap gap-2">
+        {PRESETS.map(p => (
+          <button
+            key={p.label}
+            onClick={() => applyPreset(p.palette)}
+            className="text-xs px-3 py-1.5 bg-indigo-800 hover:bg-indigo-700 text-indigo-100 rounded border border-indigo-600 whitespace-nowrap"
+          >
+            {p.label}
+          </button>
+        ))}
         <button
           onClick={onReset}
-          className="text-xs px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-300 rounded whitespace-nowrap"
+          className="text-xs px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-300 rounded whitespace-nowrap ml-auto"
         >
           Reset to AI picks
         </button>
       </div>
 
+      {/* Search */}
+      <input
+        value={search}
+        onChange={e => onSearchChange(e.target.value)}
+        placeholder="Search blocks…"
+        className="w-full bg-gray-800 border border-gray-700 text-white text-xs px-2 py-1.5 rounded font-mono outline-none focus:border-blue-500"
+      />
+
+      {/* Category filter chips */}
+      <div className="flex flex-wrap gap-1 max-h-20 overflow-y-auto">
+        <button
+          onClick={() => setSelectedCategory(null)}
+          className={`text-xs px-2 py-0.5 rounded border ${selectedCategory === null ? 'bg-blue-700 border-blue-500 text-white' : 'bg-gray-800 border-gray-600 text-gray-400 hover:text-white'}`}
+        >
+          All
+        </button>
+        {categories.map(cat => (
+          <button
+            key={cat}
+            onClick={() => setSelectedCategory(cat === selectedCategory ? null : cat)}
+            className={`text-xs px-2 py-0.5 rounded border ${selectedCategory === cat ? 'bg-blue-700 border-blue-500 text-white' : 'bg-gray-800 border-gray-600 text-gray-400 hover:text-white'}`}
+          >
+            {cat.replace(/_/g, ' ')}
+          </button>
+        ))}
+      </div>
+
+      {/* Slot rows */}
       <div className="space-y-2">
         {PALETTE_SLOTS.map(({ key, label }) => {
-          const current = overrides[key] ?? palette[key]
+          const current      = overrides[key] ?? palette[key]
           const currentEntry = findEntryById(current)
           const isOverridden = !!overrides[key]
+          const isLight      = currentEntry?.isLightSource ?? false
           return (
             <div key={key} className="flex items-center gap-2 text-xs">
               <span className="text-gray-400 w-36 shrink-0">{label}</span>
-              {currentEntry && (
+              {currentEntry ? (
                 <span
                   className="w-4 h-4 rounded shrink-0 border border-gray-600"
                   style={{ background: currentEntry.rendererColor }}
                   title={currentEntry.blockId}
                 />
+              ) : (
+                <span className="w-4 h-4 shrink-0" />
               )}
+              {isLight && <span className="text-yellow-300 shrink-0" title="Light source">✦</span>}
               <select
                 value={current}
                 onChange={e => setSlot(key, e.target.value)}
                 className="flex-1 bg-gray-800 border border-gray-700 text-gray-200 text-xs px-2 py-1 rounded font-mono outline-none focus:border-blue-500"
               >
-                {search.trim() ? (
-                  <optgroup label="Search results">
-                    {allEntries.map(e => (
-                      <option key={e.id} value={e.id}>{e.displayName} ({e.id})</option>
+                {search.trim() || selectedCategory ? (
+                  <optgroup label={selectedCategory ? selectedCategory.replace(/_/g, ' ') : 'Search results'}>
+                    {filteredEntries.map(e => (
+                      <option key={e.id} value={e.id}>
+                        {e.displayName}{e.isLightSource ? ' ✦' : ''} ({e.id})
+                      </option>
                     ))}
                   </optgroup>
                 ) : (
                   Array.from(categoryMap.entries()).map(([cat, entries]) => (
                     <optgroup key={cat} label={cat.replace(/_/g, ' ')}>
                       {entries.map(e => (
-                        <option key={e.id} value={e.id}>{e.displayName}</option>
+                        <option key={e.id} value={e.id}>
+                          {e.displayName}{e.isLightSource ? ' ✦' : ''}
+                        </option>
                       ))}
                     </optgroup>
                   ))
