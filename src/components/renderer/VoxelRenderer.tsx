@@ -109,29 +109,57 @@ export default function VoxelRenderer({
 
 // ---- Instanced voxel mesh -----------------------------------------------
 
+const MAX_POINT_LIGHTS = 8
+
 function VoxelMesh({ blocks, onBlockClick }: { blocks: BlockEntry[]; onBlockClick?: (b: BlockEntry) => void }) {
-  // Group blocks by color for instancing
-  const groups = useMemo(() => {
-    const map = new Map<string, BlockEntry[]>()
+  const { regular, emissive, pointLights } = useMemo(() => {
+    const reg  = new Map<string, BlockEntry[]>()
+    const emit = new Map<string, BlockEntry[]>()
+    const pts:  { x: number; y: number; z: number; color: string }[] = []
+
     for (const b of blocks) {
-      const { color } = getBlockColorForEntry(b)
+      const { color, emissive: isEmit } = getBlockColorForEntry(b)
+      const map = isEmit ? emit : reg
       if (!map.has(color)) map.set(color, [])
       map.get(color)!.push(b)
+      if (isEmit && pts.length < MAX_POINT_LIGHTS) pts.push({ x: b.x, y: b.y, z: b.z, color })
     }
-    return map
+    return { regular: reg, emissive: emit, pointLights: pts }
   }, [blocks])
 
   return (
     <>
-      {Array.from(groups.entries()).map(([color, blockList]) => (
-        <BlockGroup key={color} color={color} blocks={blockList} onBlockClick={onBlockClick} />
+      {Array.from(regular.entries()).map(([color, list]) => (
+        <BlockGroup key={color} color={color} isEmissive={false} blocks={list} onBlockClick={onBlockClick} />
+      ))}
+      {Array.from(emissive.entries()).map(([color, list]) => (
+        <BlockGroup key={`e_${color}`} color={color} isEmissive blocks={list} onBlockClick={onBlockClick} />
+      ))}
+      {pointLights.map((l, i) => (
+        <pointLight
+          key={i}
+          position={[l.x + 0.5, l.y + 0.5, l.z + 0.5]}
+          color={l.color}
+          intensity={1.2}
+          distance={8}
+          decay={2}
+        />
       ))}
     </>
   )
 }
 
-function BlockGroup({ color, blocks, onBlockClick }: { color: string; blocks: BlockEntry[]; onBlockClick?: (b: BlockEntry) => void }) {
+function BlockGroup({
+  color, isEmissive, blocks, onBlockClick,
+}: {
+  color: string
+  isEmissive: boolean
+  blocks: BlockEntry[]
+  onBlockClick?: (b: BlockEntry) => void
+}) {
   const [hovered, setHovered] = useState<string | null>(null)
+  const transparent = color.length > 7
+  const opacity = transparent ? 0.6 : 1
 
   return (
     <>
@@ -149,11 +177,21 @@ function BlockGroup({ color, blocks, onBlockClick }: { color: string; blocks: Bl
             receiveShadow
           >
             <boxGeometry args={[0.98, 0.98, 0.98]} />
-            <meshLambertMaterial
-              color={isHovered ? '#ffffff' : color}
-              transparent={color.length > 7}
-              opacity={color.length > 7 ? 0.6 : 1}
-            />
+            {isEmissive ? (
+              <meshStandardMaterial
+                color={isHovered ? '#ffffff' : color}
+                emissive={isHovered ? '#ffffff' : color}
+                emissiveIntensity={0.55}
+                transparent={transparent}
+                opacity={opacity}
+              />
+            ) : (
+              <meshLambertMaterial
+                color={isHovered ? '#ffffff' : color}
+                transparent={transparent}
+                opacity={opacity}
+              />
+            )}
           </mesh>
         )
       })}

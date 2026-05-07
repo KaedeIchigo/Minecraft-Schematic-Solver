@@ -1,5 +1,6 @@
 // Approximate block colors for the renderer — fallback palette for unknown blocks
 // Based on standard Minecraft block textures. Modded blocks get a category-based fallback.
+import { getRendererColorByBlockId } from './blockRegistry.js'
 
 export interface BlockColorEntry {
   color: string      // #rrggbb
@@ -244,6 +245,10 @@ export function getBlockColor(blockId: string): BlockColorEntry {
 
   const known = KNOWN_COLORS[blockId]
   if (known) return known
+
+  // Registry has specific rendererColor for modded blocks not in KNOWN_COLORS
+  const registryColor = getRendererColorByBlockId(blockId)
+  if (registryColor) return { color: registryColor }
 
   // Mod category fallback
   for (const cat of CATEGORY_COLORS) {

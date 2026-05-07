@@ -342,3 +342,20 @@ export function getCamoBlockId(nbtData: Record<string, unknown> | undefined): st
 
 export const FRAMED_CUBE_BLOCK_ID = FRAMED_BLOCK_ID
 export const UTILITY_GAP_BLOCK_ID = 'minecraft:smooth_stone_slab'
+
+// =============================================================================
+// Renderer color lookup by blockId (for non-framed blocks)
+// =============================================================================
+
+// blockId → rendererColor, first-wins, framed entries excluded (color depends on camo)
+const BLOCKID_COLOR_MAP = new Map<string, string>()
+for (const entry of REGISTRY_ENTRIES) {
+  if (!entry.isFramed && !BLOCKID_COLOR_MAP.has(entry.blockId)) {
+    BLOCKID_COLOR_MAP.set(entry.blockId, entry.rendererColor)
+  }
+}
+
+/** Returns the registry's rendererColor for a given blockId, or undefined if not found. */
+export function getRendererColorByBlockId(blockId: string): string | undefined {
+  return BLOCKID_COLOR_MAP.get(blockId)
+}

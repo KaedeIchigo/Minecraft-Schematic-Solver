@@ -568,6 +568,318 @@ function buildCorridor(a: RoomBox, b: RoomBox, pal: ResolvedPalette): BlockEntry
   return blocks
 }
 
+// ─── Interior decoration ──────────────────────────────────────────────────────
+// Runs after shell generation for each room. Adds detail blocks inside the
+// shell using last-writer-wins semantics (deduplicateBlocks at the end).
+
+function interiorDecorate(box: RoomBox, pal: ResolvedPalette): BlockEntry[] {
+  const blocks: BlockEntry[] = []
+  const { origin, outerMax, room } = box
+  const features = new Set(room.features.map(f => f.toLowerCase()))
+  const type = (room.type ?? 'room').toLowerCase()
+
+  const x0 = origin.x + 1, x1 = outerMax.x - 1
+  const y0 = origin.y + 1, y1 = outerMax.y - 1
+  const z0 = origin.z + 1, z1 = outerMax.z - 1
+
+  // Too cramped to decorate
+  if (x0 > x1 || y0 > y1 || z0 > z1) return blocks
+
+  const cx = Math.floor((origin.x + outerMax.x) / 2)
+  const cz = Math.floor((origin.z + outerMax.z) / 2)
+  const framedBlackstone = resolveBlock('framed_blackstone')
+
+  // ── Universal: floor border ─────────────────────────────────────────────
+  for (let x = x0; x <= x1; x++) {
+    for (let z = z0; z <= z1; z++) {
+      if (x === x0 || x === x1 || z === z0 || z === z1) {
+        place(blocks, x, origin.y, z, pal.accent)
+      }
+    }
+  }
+
+  // ── Universal: wall paneling (accent every 4 blocks, 2 tall at mid-wall) ─
+  const yMid = origin.y + Math.floor((outerMax.y - origin.y) / 2)
+  if (yMid >= y0 && yMid + 1 <= y1) {
+    // N and S walls
+    for (let x = x0; x <= x1; x++) {
+      if ((x - x0) % 4 === 0) {
+        place(blocks, x, yMid,     origin.z,   pal.accent)
+        place(blocks, x, yMid + 1, origin.z,   pal.accent)
+        place(blocks, x, yMid,     outerMax.z, pal.accent)
+        place(blocks, x, yMid + 1, outerMax.z, pal.accent)
+      }
+    }
+    // E and W walls
+    for (let z = z0; z <= z1; z++) {
+      if ((z - z0) % 4 === 0) {
+        place(blocks, origin.x,   yMid,     z, pal.accent)
+        place(blocks, origin.x,   yMid + 1, z, pal.accent)
+        place(blocks, outerMax.x, yMid,     z, pal.accent)
+        place(blocks, outerMax.x, yMid + 1, z, pal.accent)
+      }
+    }
+  }
+
+  // ── Universal: corner pillars ───────────────────────────────────────────
+  if (x1 > x0 && z1 > z0) {
+    for (const [px, pz] of [[x0, z0], [x0, z1], [x1, z0], [x1, z1]] as [number, number][]) {
+      for (let y = y0; y <= y1; y++) place(blocks, px, y, pz, framedBlackstone)
+    }
+  }
+
+  // ── Universal: ceiling light grid (sea_lantern every 5 blocks, inset 2) ─
+  for (let x = x0 + 1; x <= x1 - 1; x++) {
+    for (let z = z0 + 1; z <= z1 - 1; z++) {
+      if ((x - x0 - 1) % 5 === 0 && (z - z0 - 1) % 5 === 0) {
+        place(blocks, x, outerMax.y, z, pal.light)
+      }
+    }
+  }
+
+  // ── Per-type ────────────────────────────────────────────────────────────
+  switch (type) {
+    case 'hall':     decorateHall(blocks, box, pal, features, cx, cz, framedBlackstone); break  // features/framedBlackstone forwarded for future use
+    case 'room':     decorateRoom(blocks, box, pal, features, cx, cz);                   break
+    case 'utility':  decorateUtility(blocks, box, pal, features);                        break
+    case 'corridor': decorateCorridor(blocks, box, pal);                                 break
+    case 'stairwell':decorateStairwell(blocks, box, pal);                                break
+  }
+
+  return blocks
+}
+
+function decorateHall(
+  blocks: BlockEntry[], box: RoomBox, pal: ResolvedPalette,
+  _features: Set<string>, cx: number, cz: number, _framedBlackstone: ResolvedBlock,
+) {
+  const { origin, outerMax, innerSize } = box
+  const chain   = resolveBlock('chain')
+  const lantern = resolveBlock('lantern')
+
+  // 3×3 cross on floor using accent
+  for (const [dx, dz] of [[0,0],[1,0],[-1,0],[0,1],[0,-1]] as [number,number][]) {
+    place(blocks, cx + dx, origin.y, cz + dz, pal.accent)
+  }
+
+  // Hanging chain + lantern if inner height >= 6
+  if (innerSize.y >= 6) {
+    const hangTop = outerMax.y - 1
+    if (hangTop - 3 > origin.y + 1) {
+      place(blocks, cx, hangTop,     cz, chain)
+      place(blocks, cx, hangTop - 1, cz, chain)
+      place(blocks, cx, hangTop - 2, cz, chain)
+      place(blocks, cx, hangTop - 3, cz, lantern)
+    }
+  }
+
+  // arched_ceiling is already handled by the shell builder (addArchedCeiling).
+  // No re-processing here to avoid overwriting the stair blocks it places.
+}
+
+function decorateRoom(
+  blocks: BlockEntry[], box: RoomBox, pal: ResolvedPalette,
+  features: Set<string>, cx: number, cz: number,
+) {
+  const { origin, outerMax, innerSize } = box
+  const x0 = origin.x + 1, x1 = outerMax.x - 1
+  const z0 = origin.z + 1, z1 = outerMax.z - 1
+  const andesite  = resolveBlock('create_andesite_casing')
+  const brass     = resolveBlock('create_brass_casing')
+  const seaLantern = resolveBlock('sea_lantern')
+
+  // Console in each quadrant: 2×2 andesite → 2×2 brass → sea_lantern
+  if (innerSize.y >= 3) {
+    const qx: number[] = [
+      Math.max(x0, Math.floor((x0 + cx) / 2) - 1),
+      Math.max(x0, Math.floor((cx + x1) / 2) - 1),
+    ]
+    const qz: number[] = [
+      Math.max(z0, Math.floor((z0 + cz) / 2) - 1),
+      Math.max(z0, Math.floor((cz + z1) / 2) - 1),
+    ]
+    for (const qxv of qx) {
+      for (const qzv of qz) {
+        if (qxv + 1 > x1 || qzv + 1 > z1) continue
+        for (let dx = 0; dx <= 1; dx++) {
+          for (let dz = 0; dz <= 1; dz++) {
+            place(blocks, qxv + dx, origin.y + 1, qzv + dz, andesite)
+            if (origin.y + 2 < outerMax.y) place(blocks, qxv + dx, origin.y + 2, qzv + dz, brass)
+          }
+        }
+        if (origin.y + 3 < outerMax.y) place(blocks, qxv, origin.y + 3, qzv, seaLantern)
+      }
+    }
+  }
+
+  // Raised platform in back half (z >= cz) with deepslate_tile stairs
+  if (features.has('raised_platform') && cz > z0) {
+    const stairId = stairsForBase('minecraft:deepslate_tiles') ?? 'minecraft:deepslate_brick_stairs'
+    for (let x = x0; x <= x1; x++) {
+      for (let z = cz; z <= z1; z++) {
+        place(blocks, x, origin.y + 1, z, pal.floor)
+      }
+      if (cz - 1 >= z0) {
+        place(blocks, x, origin.y + 1, cz - 1, {
+          blockId: stairId,
+          blockState: { facing: 'south', half: 'bottom', shape: 'straight', waterlogged: 'false' },
+        })
+      }
+    }
+  }
+
+  // Equipment consoles: shelf at y+2 along walls, create_chute at y+3
+  if (features.has('equipment_consoles')) {
+    const chute  = resolveBlock('create_chute')
+    const sY = origin.y + 2, tY = origin.y + 3
+    if (sY < outerMax.y) {
+      for (let x = x0; x <= x1; x++) {
+        place(blocks, x, sY, origin.z,   pal.floor)
+        place(blocks, x, sY, outerMax.z, pal.floor)
+        if (tY < outerMax.y) {
+          place(blocks, x, tY, origin.z,   chute)
+          place(blocks, x, tY, outerMax.z, chute)
+        }
+      }
+      for (let z = z0; z <= z1; z++) {
+        place(blocks, origin.x,   sY, z, pal.floor)
+        place(blocks, outerMax.x, sY, z, pal.floor)
+        if (tY < outerMax.y) {
+          place(blocks, origin.x,   tY, z, chute)
+          place(blocks, outerMax.x, tY, z, chute)
+        }
+      }
+    }
+  }
+}
+
+function decorateUtility(
+  blocks: BlockEntry[], box: RoomBox, _pal: ResolvedPalette, features: Set<string>,
+) {
+  const { origin, outerMax, innerSize } = box
+  const x0 = origin.x + 1, x1 = outerMax.x - 1
+  const y0 = origin.y + 1, y1 = outerMax.y - 1
+  const z0 = origin.z + 1, z1 = outerMax.z - 1
+  const shaft   = resolveBlock('create_shaft')
+  const pipe    = resolveBlock('create_fluid_pipe')
+  const ieSteel = resolveBlock('ie_sheetmetal_steel')
+  const midY    = Math.max(y0, Math.min(y1, origin.y + Math.floor(innerSize.y / 2)))
+
+  // 3×3 grid of shaft columns evenly spaced across the interior
+  const shafts: [number, number][][] = []
+  for (let i = 0; i < 3; i++) {
+    shafts.push([])
+    for (let j = 0; j < 3; j++) {
+      const sx = Math.min(x1, x0 + Math.round(i * (x1 - x0) / 2))
+      const sz = Math.min(z1, z0 + Math.round(j * (z1 - z0) / 2))
+      shafts[i].push([sx, sz])
+      for (let y = y0; y <= y1; y++) place(blocks, sx, y, sz, shaft)
+    }
+  }
+
+  // Horizontal fluid pipes connecting adjacent shaft columns at mid-height
+  for (let i = 0; i < 2; i++) {
+    for (let j = 0; j < 3; j++) {
+      const [ax, az] = shafts[i][j], [bx] = shafts[i + 1][j]
+      for (let x = ax + 1; x < bx; x++) place(blocks, x, midY, az, pipe)
+    }
+  }
+  for (let i = 0; i < 3; i++) {
+    for (let j = 0; j < 2; j++) {
+      const [ax, az] = shafts[i][j], [, bz] = shafts[i][j + 1]
+      for (let z = az + 1; z < bz; z++) place(blocks, ax, midY, z, pipe)
+    }
+  }
+
+  // Cabling: ie_sheetmetal_steel ceiling grid every 3 blocks
+  if (features.has('cabling')) {
+    for (let x = x0; x <= x1; x += 3) {
+      for (let z = z0; z <= z1; z += 3) {
+        place(blocks, x, outerMax.y - 1, z, ieSteel)
+      }
+    }
+  }
+}
+
+function decorateCorridor(blocks: BlockEntry[], box: RoomBox, pal: ResolvedPalette) {
+  const { origin, outerMax, innerSize } = box
+  const x0 = origin.x + 1, x1 = outerMax.x - 1
+  const y0 = origin.y + 1
+  const z0 = origin.z + 1, z1 = outerMax.z - 1
+  const ieSteel  = resolveBlock('ie_sheetmetal_steel')
+  const deepslate = resolveBlock('deepslate_tile')
+  const runsAlongX = innerSize.x >= innerSize.z
+
+  if (runsAlongX) {
+    const zCenter = Math.floor((origin.z + outerMax.z) / 2)
+    // Floor stripe along X
+    for (let x = x0; x <= x1; x++) place(blocks, x, origin.y, zCenter, deepslate)
+    // Wall-mounted lights every 6 blocks
+    for (let x = x0; x <= x1; x += 6) {
+      place(blocks, x, y0,     origin.z,   ieSteel)
+      place(blocks, x, y0 + 1, origin.z,   { blockId: 'minecraft:end_rod', blockState: { facing: 'north' } })
+      place(blocks, x, y0,     outerMax.z, ieSteel)
+      place(blocks, x, y0 + 1, outerMax.z, { blockId: 'minecraft:end_rod', blockState: { facing: 'south' } })
+    }
+  } else {
+    const xCenter = Math.floor((origin.x + outerMax.x) / 2)
+    // Floor stripe along Z
+    for (let z = z0; z <= z1; z++) place(blocks, xCenter, origin.y, z, deepslate)
+    // Wall-mounted lights every 6 blocks
+    for (let z = z0; z <= z1; z += 6) {
+      place(blocks, origin.x,   y0,     z, ieSteel)
+      place(blocks, origin.x,   y0 + 1, z, { blockId: 'minecraft:end_rod', blockState: { facing: 'west' } })
+      place(blocks, outerMax.x, y0,     z, ieSteel)
+      place(blocks, outerMax.x, y0 + 1, z, { blockId: 'minecraft:end_rod', blockState: { facing: 'east' } })
+    }
+  }
+  // Suppress unused palette warning
+  void pal
+}
+
+function decorateStairwell(blocks: BlockEntry[], box: RoomBox, pal: ResolvedPalette) {
+  const { origin, outerMax, innerSize } = box
+  const x0 = origin.x + 1, x1 = outerMax.x - 1
+  const z0 = origin.z + 1, z1 = outerMax.z - 1
+  const ironBars = resolveBlock('iron_bars')
+  const stairId  = stairsForBase('minecraft:deepslate_tiles') ?? 'minecraft:deepslate_brick_stairs'
+
+  // Ordered list of positions spiraling clockwise around the perimeter
+  type Step = { x: number; z: number; facing: string; railDX: number; railDZ: number }
+  const perimSteps: Step[] = []
+  // S face: walk East
+  for (let x = x0; x <= x1; x++) perimSteps.push({ x, z: z0, facing: 'east',  railDX: 0,  railDZ: 1  })
+  // E face: walk South
+  for (let z = z0 + 1; z <= z1; z++) perimSteps.push({ x: x1, z, facing: 'south', railDX: -1, railDZ: 0  })
+  // N face: walk West
+  for (let x = x1 - 1; x >= x0; x--) perimSteps.push({ x, z: z1, facing: 'west',  railDX: 0,  railDZ: -1 })
+  // W face: walk North
+  for (let z = z1 - 1; z >= z0; z--) perimSteps.push({ x: x0, z, facing: 'north', railDX: 1,  railDZ: 0  })
+
+  const perim = perimSteps.length
+  const innerH = Math.floor(innerSize.y)
+  const stepEvery = Math.max(1, Math.floor(perim / innerH))
+  let curY = origin.y + 1
+
+  for (let idx = 0; idx < perimSteps.length && curY <= outerMax.y - 1; idx++) {
+    const { x, z, facing, railDX, railDZ } = perimSteps[idx]
+    // Stair block
+    place(blocks, x, curY, z, {
+      blockId: stairId,
+      blockState: { facing, half: 'bottom', shape: 'straight', waterlogged: 'false' },
+    })
+    // Solid fill below stair for structural support
+    for (let y = origin.y + 1; y < curY; y++) place(blocks, x, y, z, pal.floor)
+    // Railing on the inside face
+    const rx = x + railDX, rz = z + railDZ
+    if (rx >= x0 && rx <= x1 && rz >= z0 && rz <= z1) {
+      place(blocks, rx, curY, rz, ironBars)
+    }
+    // Advance stair height
+    if ((idx + 1) % stepEvery === 0) curY = Math.min(curY + 1, outerMax.y - 1)
+  }
+}
+
 // ─── Utility gap layers ───────────────────────────────────────────────────────
 
 function insertUtilityGaps(blocks: BlockEntry[], boxes: RoomBox[]): BlockEntry[] {
@@ -605,7 +917,10 @@ export function layoutBlueprint(blueprint: Blueprint): LayoutResult {
   const boxes = blueprint.rooms.map(computeBox)
 
   let blocks: BlockEntry[] = []
-  for (const box of boxes) blocks = blocks.concat(buildRoomShell(box, pal))
+  for (const box of boxes) {
+    blocks = blocks.concat(buildRoomShell(box, pal))
+    blocks = blocks.concat(interiorDecorate(box, pal))
+  }
 
   const seen  = new Set<string>()
   const byId  = new Map(boxes.map(b => [b.room.id, b]))
