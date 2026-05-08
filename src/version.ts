@@ -4,9 +4,21 @@ export interface ChangelogEntry {
   changes: string[]
 }
 
-export const APP_VERSION = '0.5.0'
+export const APP_VERSION = '0.5.1'
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.5.1',
+    date: '2026-05-08',
+    changes: [
+      'Greedy meshing: replaces per-block mesh with merged face quads — reduces draw geometry 10–100×',
+      'Face occlusion culling: skips all faces hidden by adjacent solid blocks — zero interior faces for enclosed rooms',
+      'Chunked rendering: 16×16×16 chunks, each an independent mesh group with automatic frustum culling',
+      'MeshLambertMaterial for regular blocks (faster than MeshStandardMaterial); MeshStandardMaterial kept for emissive blocks',
+      'Renderer settings: antialias off, powerPreference high-performance, shadows disabled, demand-driven render loop',
+      'FPS overlay: press F to toggle; updates every 500 ms using useFrame with a DOM ref',
+    ],
+  },
   {
     version: '0.5.0',
     date: '2026-05-08',
