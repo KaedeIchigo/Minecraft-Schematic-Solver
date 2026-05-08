@@ -11,12 +11,13 @@ const Vec3Schema = z.object({
 //   "room-id"
 //   { id: "room-id", connection_type: "doorway" }
 //   { target: "room-id", connection_type: "shaft" }   ← Gemini variant
+//   { room: "room-id", connection_type: "..." }        ← GPT variant
 // Returns null for garbage entries (filtered out below).
 function normaliseConnectsToEntry(entry: unknown): { id: string; connection_type?: string } | string | null {
   if (typeof entry === 'string') return entry.trim() || null
   if (typeof entry !== 'object' || entry === null) return null
   const obj = entry as Record<string, unknown>
-  const id = String(obj.id ?? obj.target ?? '').trim()
+  const id = String(obj.id ?? obj.target ?? obj.room ?? '').trim()
   if (!id) return null
   const connection_type = typeof obj.connection_type === 'string' ? obj.connection_type : undefined
   return { id, connection_type }
@@ -96,6 +97,84 @@ export const BlueprintSchema = z.object({
   utility_gap:      z.boolean().default(false),
   rooms:            z.array(RoomSchema).min(1),
 })
+
+function labelToKebab(label: string): string {
+  return label.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '')
+}
+
+/**
+ * Pre-Zod normalizer: corrects common AI field-name deviations and logs
+ * a warning for each field that had to be fixed. Call before parseBlueprint().
+ */
+export function normalizeBlueprintResponse(raw: unknown): unknown {
+  if (typeof raw !== 'object' || raw === null) return raw
+  const bp = raw as Record<string, unknown>
+  if (!Array.isArray(bp.rooms)) return raw
+
+  bp.rooms = bp.rooms.map((room: unknown, idx: number) => {
+    if (typeof room !== 'object' || room === null) return room
+    const r = { ...(room as Record<string, unknown>) }
+
+    // name → id
+    if (!r.id && r.name) {
+      console.warn(`[normalize] room[${idx}]: 'name' → 'id' ("${r.name}")`)
+      r.id = r.name
+    }
+
+    // dx/dy/dz → size
+    if (!r.size && (r.dx !== undefined || r.dy !== undefined || r.dz !== undefined)) {
+      console.warn(`[normalize] room[${idx}] "${r.id ?? idx}": dx/dy/dz → size`)
+      r.size = { x: r.dx ?? 1, y: r.dy ?? 4, z: r.dz ?? 1 }
+    }
+
+    // flat x/y/z at root when size/position not present → position
+    if (!r.position && r.x !== undefined && r.y !== undefined && r.z !== undefined && !r.size) {
+      console.warn(`[normalize] room[${idx}] "${r.id ?? idx}": root x/y/z → position`)
+      r.position = { x: r.x, y: r.y, z: r.z }
+    }
+
+    // connects_to: flatten {room: "..."} objects (others handled in normaliseConnectsToEntry)
+    if (Array.isArray(r.connects_to)) {
+      r.connects_to = r.connects_to.map((entry: unknown) => {
+        if (typeof entry === 'object' && entry !== null) {
+          const obj = entry as Record<string, unknown>
+          if (obj.room && !obj.id && !obj.target) {
+            console.warn(`[normalize] room[${idx}] "${r.id ?? idx}": connects_to[].room → string`)
+            return { id: String(obj.room), connection_type: obj.connection_type }
+          }
+        }
+        return entry
+      })
+    }
+
+    // room-level connection_type: annotate each connects_to string with it
+    if (r.connection_type && Array.isArray(r.connects_to)) {
+      r.connects_to = r.connects_to.map((entry: unknown) => {
+        if (typeof entry === 'string') {
+          return { id: entry, connection_type: r.connection_type }
+        }
+        return entry
+      })
+    }
+
+    // Generate id from label or index if still missing
+    if (!r.id) {
+      const generated = r.label
+        ? labelToKebab(String(r.label)) || `room-${idx}`
+        : `room-${idx}`
+      console.warn(`[normalize] room[${idx}]: missing 'id', generated "${generated}"`)
+      r.id = generated
+    }
+
+    // Safe defaults for optional fields
+    if (!r.shape)    r.shape    = 'rectangle'
+    if (!r.features) r.features = []
+
+    return r
+  })
+
+  return bp
+}
 
 export function parseBlueprint(raw: unknown): Blueprint {
   return BlueprintSchema.parse(raw) as Blueprint

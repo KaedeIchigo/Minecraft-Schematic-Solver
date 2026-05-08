@@ -4,9 +4,19 @@ export interface ChangelogEntry {
   changes: string[]
 }
 
-export const APP_VERSION = '0.4.0'
+export const APP_VERSION = '0.4.1'
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.4.1',
+    date: '2025-05-08',
+    changes: [
+      'Fixed blueprint schema validation — added normalizeBlueprintResponse() to handle AI field name deviations (name→id, dx/dy/dz→size, flat connects_to)',
+      'Normalizer handles: name→id, dx/dy/dz→size, root x/y/z→position, connects_to[].room→string, room-level connection_type annotation, auto-generated id from label',
+      'System prompt ROOMS SCHEMA section rewritten with explicit field names, correct example, and anti-patterns to avoid',
+      'normaliseConnectsToEntry now handles {room: "..."} object variant used by some models',
+    ],
+  },
   {
     version: '0.4.0',
     date: '2025-05-08',

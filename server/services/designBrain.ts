@@ -1,5 +1,5 @@
 import type { Blueprint } from '@shared/types.js'
-import { extractJsonObject, parseBlueprint } from '../../shared/blueprintSchema.js'
+import { extractJsonObject, normalizeBlueprintResponse, parseBlueprint } from '../../shared/blueprintSchema.js'
 
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions'
 const DEFAULT_MODEL = 'google/gemini-flash-1.5'
@@ -24,9 +24,36 @@ The blueprint supports non-rectangular room shapes via an optional "shape" field
 - "shape": "wedge" — triangular/diagonal shape, use "direction" sub-field ("NE","NW","SE","SW")
 - "shape": "column" — single-block-wide vertical shaft, uses only Y size
 
-CONNECTIVITY:
-- connects_to must reflect ACTUAL adjacency. Only connect rooms that physically touch or are directly accessible from each other.
-- Include a "connection_type" per entry in connects_to: "doorway" | "open" | "shaft" | "bridge"
+ROOMS SCHEMA — follow this exactly, no variations:
+
+Each room MUST use these exact field names:
+- "id" (NOT "name", NOT "room_id") — a lowercase kebab-case string like "core-bottom"
+- "label" — human readable name like "Core Bottom"
+- "type" — one of: hall, room, corridor, stairwell, utility
+- "shape" — one of: rectangle, cross, octagon, cylinder, wedge, column
+- "size" — object with keys "x", "y", "z" (inner dimensions as integers)
+- "position" — object with keys "x", "y", "z" (position relative to structure origin)
+- "connects_to" — array of STRINGS (just the id values, like ["core-mid", "wing-nw"])
+- "connection_type" — single string for this room's primary connection style: "doorway" | "open" | "shaft" | "bridge"
+- "features" — array of strings
+
+CORRECT example room:
+{
+  "id": "core-bottom",
+  "label": "Core Bottom",
+  "type": "room",
+  "shape": "cylinder",
+  "size": { "x": 10, "y": 5, "z": 10 },
+  "position": { "x": 15, "y": 0, "z": 15 },
+  "connects_to": ["core-mid"],
+  "connection_type": "shaft",
+  "features": ["support_pillars"]
+}
+
+WRONG — do not use these field names:
+- "name" → use "id"
+- "dx/dy/dz" → use "size": { "x", "y", "z" }
+- "connects_to": [{ "room": "...", "connection_type": "..." }] → use flat string array
 
 OUTPUT: Return ONLY valid JSON matching the blueprint schema. No preamble, no explanation, no markdown fences.`
 
@@ -107,7 +134,7 @@ export async function callDesignBrain(opts: DesignBrainOptions): Promise<Bluepri
   }
 
   try {
-    return parseBlueprint(parsed)
+    return parseBlueprint(normalizeBlueprintResponse(parsed))
   } catch (e) {
     throw new Error(`Blueprint validation failed: ${String(e)}\nRaw model output: ${content.slice(0, 800)}`)
   }
