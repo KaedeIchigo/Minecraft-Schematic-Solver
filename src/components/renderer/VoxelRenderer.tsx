@@ -1,9 +1,40 @@
-import { Canvas } from '@react-three/fiber'
+import { Canvas, useThree } from '@react-three/fiber'
 import { OrbitControls, Grid, Stats } from '@react-three/drei'
-import { Suspense, useMemo, useState } from 'react'
+import { Suspense, useEffect, useMemo, useState } from 'react'
 import { BoxGeometry } from 'three'
 import type { BlockEntry, Anchor, ConnectionPort, Vec3 } from '@shared/types.js'
 import { getBlockColorForEntry } from '@shared/blockColors.js'
+
+type CameraView = 'default' | 'top' | 'front'
+
+interface CameraCmd { view: CameraView; n: number }
+
+function CameraController({ cmd, center, defaultPos }: {
+  cmd: CameraCmd
+  center: Vec3
+  defaultPos: [number, number, number]
+}) {
+  const { camera, controls } = useThree()
+
+  useEffect(() => {
+    let pos: [number, number, number]
+    if (cmd.view === 'default') {
+      pos = defaultPos
+    } else if (cmd.view === 'top') {
+      pos = [center.x, defaultPos[1] * 1.4 + 10, center.z + 0.1]
+    } else {
+      pos = [center.x, center.y, defaultPos[2] * 1.4 + 10]
+    }
+    camera.position.set(...pos)
+    if (controls) {
+      const c = controls as unknown as { target: { set: (x: number, y: number, z: number) => void }; update: () => void }
+      c.target.set(center.x, center.y, center.z)
+      c.update()
+    }
+  }, [cmd])
+
+  return null
+}
 
 interface VoxelRendererProps {
   blocks: BlockEntry[]
@@ -29,6 +60,8 @@ export default function VoxelRenderer({
   orthographic = false,
   onBlockClick,
 }: VoxelRendererProps) {
+  const [camCmd, setCamCmd] = useState<CameraCmd>({ view: 'default', n: 0 })
+
   const visibleBlocks = useMemo(() => {
     const airIds = new Set(['minecraft:air', 'minecraft:cave_air'])
     return blocks.filter(b => {
@@ -43,13 +76,43 @@ export default function VoxelRenderer({
     return { x: dimensions.x / 2, y: dimensions.y / 2, z: dimensions.z / 2 }
   }, [dimensions])
 
+  const defaultCamPos = useMemo((): [number, number, number] => {
+    if (!dimensions) return [30, 30, 30]
+    const dist = Math.max(dimensions.x, dimensions.y, dimensions.z) * 2.0
+    const d = dist / Math.SQRT2
+    return [center.x + d, center.y + d, center.z + d]
+  }, [dimensions, center])
+
+  const orthoZoom = useMemo(() => {
+    if (!dimensions) return 20
+    return Math.max(1, Math.min(20, 200 / Math.max(dimensions.x, dimensions.z)))
+  }, [dimensions])
+
+  function triggerView(view: CameraView) {
+    setCamCmd(c => ({ view, n: c.n + 1 }))
+  }
+
   return (
-    <div style={{ width: '100%', height: '100%', background: '#1a1a2e' }}>
+    <div style={{ width: '100%', height: '100%', background: '#1a1a2e', position: 'relative' }}>
+      {/* Camera control buttons */}
+      <div className="absolute top-2 right-2 z-10 flex gap-1">
+        {(['default', 'top', 'front'] as CameraView[]).map(v => (
+          <button
+            key={v}
+            onClick={() => triggerView(v)}
+            className="text-xs px-2 py-1 rounded text-gray-300 hover:text-white"
+            style={{ background: 'rgba(13,17,23,0.85)', border: '1px solid #30363d' }}
+          >
+            {v === 'default' ? 'Reset Camera' : v === 'top' ? 'Top View' : 'Front View'}
+          </button>
+        ))}
+      </div>
+
       <Canvas
         orthographic={orthographic}
         camera={orthographic
-          ? { position: [20, 20, 20], zoom: 20 }
-          : { position: [20, 20, 20], fov: 45 }
+          ? { position: defaultCamPos, zoom: orthoZoom }
+          : { position: defaultCamPos, fov: 45 }
         }
         shadows
       >
@@ -79,7 +142,7 @@ export default function VoxelRenderer({
           {/* Grid */}
           {showGrid && (
             <Grid
-              args={[100, 100]}
+              args={[200, 200]}
               position={[center.x, -0.5, center.z]}
               cellSize={1}
               cellThickness={0.5}
@@ -87,7 +150,7 @@ export default function VoxelRenderer({
               sectionSize={8}
               sectionThickness={1}
               sectionColor="#3a3a6a"
-              fadeDistance={80}
+              fadeDistance={200}
               fadeStrength={1}
               infiniteGrid
             />
@@ -96,9 +159,10 @@ export default function VoxelRenderer({
           <OrbitControls
             makeDefault
             target={[center.x, center.y, center.z]}
-            maxDistance={200}
             minDistance={2}
           />
+
+          <CameraController cmd={camCmd} center={center} defaultPos={defaultCamPos} />
 
           {showStats && <Stats />}
         </Suspense>

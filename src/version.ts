@@ -4,9 +4,23 @@ export interface ChangelogEntry {
   changes: string[]
 }
 
-export const APP_VERSION = '0.4.1'
+export const APP_VERSION = '0.5.0'
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.5.0',
+    date: '2026-05-08',
+    changes: [
+      'Removed all structure size caps — buildings now generate at full intended scale',
+      'System prompt updated: "There is NO size limit — generate structures as large as the design requires"',
+      'Added auto theme detection from blueprint keywords with automatic palette application',
+      'Added 2 new theme presets: Medieval Stone, Organic/Nature (5 presets total)',
+      'Renderer camera now starts zoomed out to fit the full structure (distance = max_dim × 2)',
+      'Added Reset Camera, Top View, and Front View buttons as canvas overlay',
+      'Removed OrbitControls maxDistance limit — unlimited zoom out',
+      'Increased reference image limit from 4 to 10 with scrollable horizontal thumbnail strip',
+    ],
+  },
   {
     version: '0.4.1',
     date: '2025-05-08',

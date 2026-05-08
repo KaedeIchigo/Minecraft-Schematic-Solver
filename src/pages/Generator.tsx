@@ -1,4 +1,4 @@
-import { useState, useRef, useMemo } from 'react'
+import { useState, useRef, useMemo, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../store/api.ts'
 import { useAppStore } from '../store/appStore.ts'
@@ -7,7 +7,7 @@ import { resolveBlock, getEntriesByCategory, findEntryById } from '@shared/block
 
 const API_KEY_STORAGE = 'openrouter_api_key'
 const MODEL_STORAGE   = 'openrouter_model'
-const MAX_IMAGES = 4
+const MAX_IMAGES = 10
 
 const PALETTE_SLOTS: Array<{ key: keyof BlueprintMaterialPalette; label: string }> = [
   { key: 'primary_wall',   label: 'Primary Wall' },
@@ -52,7 +52,45 @@ const PRESETS: Array<{ label: string; palette: Partial<BlueprintMaterialPalette>
       frame_material: 'ae2_fluix_block',
     },
   },
+  {
+    label: 'Medieval Stone',
+    palette: {
+      primary_wall:   'chipped_smooth_basalt_bricks',
+      secondary_wall: 'stone_bricks',
+      floor:          'cobblestone',
+      ceiling:        'stone_bricks',
+      accent:         'deepslate_tile',
+      frame_material: 'iron_bars',
+    },
+  },
+  {
+    label: 'Organic / Nature',
+    palette: {
+      primary_wall:   'mossy_stone_bricks',
+      secondary_wall: 'botania_livingrock_brick',
+      floor:          'dirt_path',
+      ceiling:        'moss_block',
+      accent:         'botania_mana_glass',
+      frame_material: 'oak_log',
+    },
+  },
 ]
+
+const THEME_KEYWORDS: Array<{ pattern: RegExp; preset: string }> = [
+  { pattern: /futuristic|alien|sci[-\s]fi|space|station|cyber|technological|industrial tech|floating base/i, preset: 'Futuristic / Sci-Fi' },
+  { pattern: /dark|industrial|factory|steampunk|forge|machine|mechanical|workshop/i,                         preset: 'Dark Industrial' },
+  { pattern: /arcane|magic|mystical|elven|ancient|ruins|crystal|occult/i,                                   preset: 'Arcane / Mystical' },
+  { pattern: /medieval|castle|fortress|keep|dungeon/i,                                                       preset: 'Medieval Stone' },
+  { pattern: /nature|forest|overgrown|organic|druidic|jungle|treehouse/i,                                   preset: 'Organic / Nature' },
+]
+
+function autoDetectPreset(theme: string, styleNotes: string): string | null {
+  const text = `${theme} ${styleNotes}`
+  for (const { pattern, preset } of THEME_KEYWORDS) {
+    if (pattern.test(text)) return preset
+  }
+  return null
+}
 
 function BlockTemplatesPanel({
   palette, overrides, search, onSearchChange, onChange, onReset,
@@ -225,7 +263,15 @@ export default function Generator() {
   const [apiKey, setApiKey] = useState(() => localStorage.getItem(API_KEY_STORAGE) ?? '')
   const [model, setModel] = useState(() => localStorage.getItem(MODEL_STORAGE) ?? '')
   const [dragOver, setDragOver] = useState(false)
+  const [toast, setToast] = useState<string | null>(null)
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const showToast = useCallback((msg: string) => {
+    if (toastTimer.current) clearTimeout(toastTimer.current)
+    setToast(msg)
+    toastTimer.current = setTimeout(() => setToast(null), 4000)
+  }, [])
 
   function saveSettings() {
     if (apiKey) localStorage.setItem(API_KEY_STORAGE, apiKey)
@@ -276,6 +322,16 @@ export default function Generator() {
       })
       setBlueprint(blueprint)
       setBlueprintExpanded(true)
+      const detectedPreset = autoDetectPreset(blueprint.theme, blueprint.style_notes)
+      if (detectedPreset) {
+        const match = PRESETS.find(p => p.label === detectedPreset)
+        if (match) {
+          setPaletteOverrides(match.palette as Partial<BlueprintMaterialPalette>)
+          showToast(`Auto-detected theme: ${detectedPreset} — palette applied`)
+        }
+      } else {
+        showToast('No theme auto-detected — using current palette')
+      }
     } catch (e) {
       setError(String((e as Error).message ?? e))
     } finally {
@@ -310,6 +366,16 @@ export default function Generator() {
 
   return (
     <div className="p-6 space-y-4">
+      {/* Toast notification */}
+      {toast && (
+        <div
+          className="fixed bottom-6 right-6 z-50 px-4 py-2.5 rounded-lg shadow-lg text-sm text-white transition-opacity"
+          style={{ background: '#1f6feb', border: '1px solid #388bfd' }}
+        >
+          {toast}
+        </div>
+      )}
+
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-white">Design Brain</h1>
         <div className="flex items-center gap-3">
@@ -375,11 +441,11 @@ export default function Generator() {
             <span className="ml-2 text-gray-500 font-normal text-xs">({imageList.length}/{MAX_IMAGES})</span>
           </h2>
 
-          {/* Thumbnail grid */}
+          {/* Thumbnail strip */}
           {imageList.length > 0 && (
-            <div className="grid grid-cols-2 gap-2">
+            <div className="flex gap-2 overflow-x-auto pb-1">
               {imageList.map((src, i) => (
-                <div key={i} className="relative group rounded overflow-hidden" style={{ aspectRatio: '1' }}>
+                <div key={i} className="relative group flex-shrink-0 rounded overflow-hidden" style={{ width: 80, height: 80 }}>
                   <img src={src} alt={`Reference ${i + 1}`} className="w-full h-full object-cover" />
                   <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-40 transition-all" />
                   <button

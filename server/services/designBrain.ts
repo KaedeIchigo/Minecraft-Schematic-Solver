@@ -13,7 +13,7 @@ CRITICAL RULES:
 4. Room positions must reflect the actual spatial layout visible in the image — rooms that appear side by side must have adjacent coordinates, rooms stacked vertically must reflect that in Y position.
 5. If the build has a central core, that must be reflected as a central room. Wings or extensions must be rooms positioned outward from that core.
 6. Do NOT default to a generic "scatter rooms randomly" layout. Every room position must be justified by what you see.
-7. The bounding_box must reflect the true proportions of the structure — if it is tall and narrow, Y should be larger. If it is wide with wings, X and Z should be larger.
+7. There is NO size limit. Generate structures as large as the design requires. A castle should be castle-sized. A space station should be space-station-sized. Do not artificially constrain dimensions. The bounding_box must reflect the true proportions — if it is tall and narrow, Y should be larger; if it is wide with wings, X and Z should be larger.
 
 SHAPE EXTENSIONS:
 The blueprint supports non-rectangular room shapes via an optional "shape" field per room:
