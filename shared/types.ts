@@ -109,6 +109,14 @@ export interface MaterialEntry {
   count: number
 }
 
+export interface RoomBound {
+  id: string
+  label: string
+  type: string
+  min: Vec3
+  max: Vec3
+}
+
 export interface TemplateModule {
   id: string
   name: string
@@ -119,6 +127,7 @@ export interface TemplateModule {
   anchors: Anchor[]
   connectionPorts: ConnectionPort[]
   blocks: BlockEntry[]
+  roomBounds?: RoomBound[]
   materialList: MaterialEntry[]
   styleProfile: Partial<StyleProfile>
   sourceImages: string[]              // file paths or data-URIs

@@ -4,9 +4,22 @@ export interface ChangelogEntry {
   changes: string[]
 }
 
-export const APP_VERSION = '0.5.1'
+export const APP_VERSION = '0.5.2'
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.5.2',
+    date: '2026-05-09',
+    changes: [
+      'Fixed greedy mesh geometry artifacts and z-fighting — switched to InstancedMesh per block type with hidden face culling as stable rendering foundation',
+      'Restored block selection with raycasting, tooltip (block ID, display name, category, room, color swatch), and wireframe highlight (press Esc to dismiss)',
+      'Fixed room connectivity pass — doorways now 3×4, ±1 wall-tolerance for near-adjacent rooms, corridors punch openings into room walls at both endpoints',
+      'Corridor L-shape support: goes along X first then Z when rooms are diagonally offset',
+      'Bridge rebuilt: platform at ceiling − 2 with iron_bars railings on both sides',
+      'Added RoomBound[] to LayoutResult + TemplateModule for renderer room-lookup',
+      '[Connectivity] log line reports doorway/corridor/shaft counts after each build',
+    ],
+  },
   {
     version: '0.5.1',
     date: '2026-05-08',

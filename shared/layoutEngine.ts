@@ -1,4 +1,4 @@
-import type { BlockEntry, Blueprint, BlueprintRoom, TemplateModule, Vec3 } from './types.js'
+import type { BlockEntry, Blueprint, BlueprintRoom, RoomBound, TemplateModule, Vec3 } from './types.js'
 import { deduplicateBlocks, computeMaterialList, carveOpening } from './voxelOps.js'
 import { v4 as uuidv4 } from 'uuid'
 import { resolveBlock, stairsForBase, UTILITY_GAP_BLOCK_ID, type ResolvedBlock } from './blockRegistry.js'
@@ -435,15 +435,16 @@ function findSharedWall(a: RoomBox, b: RoomBox): SharedWall | null {
   const yMax = Math.min(a.outerMax.y, b.outerMax.y)
   if (yMax - yMin < 3) return null
 
-  if (a.outerMax.x === b.origin.x || b.outerMax.x === a.origin.x) {
-    const plane = a.outerMax.x === b.origin.x ? a.outerMax.x : b.outerMax.x
+  // Allow ±1 gap so near-adjacent rooms (1 block apart) still get a doorway
+  if (Math.abs(a.outerMax.x - b.origin.x) <= 1 || Math.abs(b.outerMax.x - a.origin.x) <= 1) {
+    const plane = Math.abs(a.outerMax.x - b.origin.x) <= 1 ? a.outerMax.x : b.outerMax.x
     const zMin  = Math.max(a.origin.z, b.origin.z) + 1
     const zMax  = Math.min(a.outerMax.z, b.outerMax.z) - 1
     if (zMax - zMin < 1) return null
     return { axis: 'x', plane, yMin, span: { min: zMin, max: zMax } }
   }
-  if (a.outerMax.z === b.origin.z || b.outerMax.z === a.origin.z) {
-    const plane = a.outerMax.z === b.origin.z ? a.outerMax.z : b.outerMax.z
+  if (Math.abs(a.outerMax.z - b.origin.z) <= 1 || Math.abs(b.outerMax.z - a.origin.z) <= 1) {
+    const plane = Math.abs(a.outerMax.z - b.origin.z) <= 1 ? a.outerMax.z : b.outerMax.z
     const xMin  = Math.max(a.origin.x, b.origin.x) + 1
     const xMax  = Math.min(a.outerMax.x, b.outerMax.x) - 1
     if (xMax - xMin < 1) return null
@@ -454,13 +455,14 @@ function findSharedWall(a: RoomBox, b: RoomBox): SharedWall | null {
 
 function carveDoorway(blocks: BlockEntry[], wall: SharedWall): BlockEntry[] {
   const center   = Math.floor((wall.span.min + wall.span.max) / 2)
+  // 3-wide opening centred on the shared wall span
   const minOther = Math.max(wall.span.min, center - 1)
   const yFloor   = wall.yMin + 1
   const facing   = wall.axis === 'x' ? 'east' : 'south'
   const pos: Vec3 = wall.axis === 'x'
     ? { x: wall.plane, y: yFloor, z: minOther }
     : { x: minOther,   y: yFloor, z: wall.plane }
-  return carveOpening(blocks, pos, facing, 2, 3)
+  return carveOpening(blocks, pos, facing, 3, 4)
 }
 
 // Shaft connection: carve a 3×3 hole through the shared ceiling/floor of stacked rooms.
@@ -488,30 +490,32 @@ function carveShaftOpening(blocks: BlockEntry[], a: RoomBox, b: RoomBox): BlockE
   return blocks.filter(b => !remove.has(`${b.x},${b.y},${b.z}`))
 }
 
-// Bridge connection: 3-wide open walkway at the ceiling of the higher room.
+// Bridge connection: 3-wide platform at (ceiling - 2) with iron_bars railings.
 function buildBridge(a: RoomBox, b: RoomBox, pal: ResolvedPalette): BlockEntry[] {
-  const bridgeY = Math.max(a.outerMax.y, b.outerMax.y)
+  // Place bridge floor 2 below the higher ceiling so it's accessible from inside
+  const bridgeY = Math.max(a.outerMax.y, b.outerMax.y) - 2
   const blocks: BlockEntry[] = []
+  const ironBars = resolveBlock('iron_bars')
 
   function walkway(xStart: number, xEnd: number, zStart: number, zEnd: number) {
-    for (let x = xStart; x <= xEnd; x++) {
-      for (let z = zStart; z <= zEnd; z++) {
+    const X0 = Math.min(xStart, xEnd), X1 = Math.max(xStart, xEnd)
+    const Z0 = Math.min(zStart, zEnd), Z1 = Math.max(zStart, zEnd)
+    const runsAlongZ = (X0 === X1)
+
+    for (let x = X0; x <= X1; x++)
+      for (let z = Z0; z <= Z1; z++)
         place(blocks, x, bridgeY, z, pal.floor)
-        // Parapets: 1-block wall on the sides of the 3-wide walkway
-      }
-    }
-    // Identify which axis the bridge runs along and add parapets on the sides
-    if (xStart === xEnd) {
-      // runs along Z — parapets at x±1
-      for (let z = zStart; z <= zEnd; z++) {
-        place(blocks, xStart - 1, bridgeY + 1, z, pal.wall)
-        place(blocks, xStart + 1, bridgeY + 1, z, pal.wall)
+
+    // iron_bars railings on the two long sides
+    if (runsAlongZ) {
+      for (let z = Z0; z <= Z1; z++) {
+        place(blocks, X0 - 1, bridgeY + 1, z, ironBars)
+        place(blocks, X1 + 1, bridgeY + 1, z, ironBars)
       }
     } else {
-      // runs along X — parapets at z±1
-      for (let x = xStart; x <= xEnd; x++) {
-        place(blocks, x, bridgeY + 1, zStart - 1, pal.wall)
-        place(blocks, x, bridgeY + 1, zStart + 1, pal.wall)
+      for (let x = X0; x <= X1; x++) {
+        place(blocks, x, bridgeY + 1, Z0 - 1, ironBars)
+        place(blocks, x, bridgeY + 1, Z1 + 1, ironBars)
       }
     }
   }
@@ -532,40 +536,79 @@ function buildBridge(a: RoomBox, b: RoomBox, pal: ResolvedPalette): BlockEntry[]
   return blocks
 }
 
-// Corridor: connect non-adjacent rooms with a secondary-wall hallway.
-function buildCorridor(a: RoomBox, b: RoomBox, pal: ResolvedPalette): BlockEntry[] {
-  const blocks: BlockEntry[] = []
+// Corridor: connect non-adjacent rooms with a secondary-wall 3×4 (w×h) hallway.
+// Uses an L-shaped path (X segment first, then Z) when rooms are diagonally offset.
+// Also carves 3×4 openings into the room walls at both connection points.
+function buildCorridor(a: RoomBox, b: RoomBox, pal: ResolvedPalette): { newBlocks: BlockEntry[]; removeKeys: Set<string> } {
+  const newBlocks: BlockEntry[] = []
+  const removeKeys = new Set<string>()  // positions to delete from existing blocks
   const yBase = Math.max(a.origin.y, b.origin.y)
-  const yTop  = yBase + 4 + 1   // 4 inner (MIN_INNER_HEIGHT) + floor + ceiling
+  const yTop  = yBase + 5   // floor + 4 inner + ceiling
 
-  function hallway(x0: number, x1: number, z0: number, z1: number) {
-    for (let x = x0; x <= x1; x++) {
-      for (let z = z0; z <= z1; z++) {
+  function tube(x0: number, x1: number, z0: number, z1: number) {
+    const X0 = Math.min(x0, x1), X1 = Math.max(x0, x1)
+    const Z0 = Math.min(z0, z1), Z1 = Math.max(z0, z1)
+    for (let x = X0; x <= X1; x++) {
+      for (let z = Z0; z <= Z1; z++) {
         for (let y = yBase; y <= yTop; y++) {
           const isF = y === yBase, isC = y === yTop
-          const isW = !isF && !isC && (x === x0 || x === x1 || z === z0 || z === z1)
-          if (isF)       place(blocks, x, y, z, pal.floor)
-          else if (isC)  place(blocks, x, y, z, pal.ceiling)
-          else if (isW)  place(blocks, x, y, z, pal.secondaryWall)
+          const isW = !isF && !isC && (x === X0 || x === X1 || z === Z0 || z === Z1)
+          if (isF)      place(newBlocks, x, y, z, pal.floor)
+          else if (isC) place(newBlocks, x, y, z, pal.ceiling)
+          else if (isW) place(newBlocks, x, y, z, pal.secondaryWall)
         }
       }
     }
   }
 
-  if (a.outerMax.x < b.origin.x) {
-    const zC = Math.floor((Math.max(a.origin.z, b.origin.z) + Math.min(a.outerMax.z, b.outerMax.z)) / 2)
-    hallway(a.outerMax.x, b.origin.x, zC - 1, zC + 1)
-  } else if (b.outerMax.x < a.origin.x) {
-    const zC = Math.floor((Math.max(a.origin.z, b.origin.z) + Math.min(a.outerMax.z, b.outerMax.z)) / 2)
-    hallway(b.outerMax.x, a.origin.x, zC - 1, zC + 1)
-  } else if (a.outerMax.z < b.origin.z) {
-    const xC = Math.floor((Math.max(a.origin.x, b.origin.x) + Math.min(a.outerMax.x, b.outerMax.x)) / 2)
-    hallway(xC - 1, xC + 1, a.outerMax.z, b.origin.z)
-  } else if (b.outerMax.z < a.origin.z) {
-    const xC = Math.floor((Math.max(a.origin.x, b.origin.x) + Math.min(a.outerMax.x, b.outerMax.x)) / 2)
-    hallway(xC - 1, xC + 1, b.outerMax.z, a.origin.z)
+  // Carve a 3-wide × 4-tall opening through room wall into existing blocks
+  function punchWall(wallX: number, wallZ: number, axis: 'x' | 'z') {
+    for (let dy = 1; dy <= 4; dy++) {
+      for (let ds = -1; ds <= 1; ds++) {
+        const px = axis === 'x' ? wallX : wallX + ds
+        const pz = axis === 'z' ? wallZ : wallZ + ds
+        removeKeys.add(`${px},${yBase + dy},${pz}`)
+      }
+    }
   }
-  return blocks
+
+  const azC = Math.floor((a.origin.z + a.outerMax.z) / 2)
+  const bzC = Math.floor((b.origin.z + b.outerMax.z) / 2)
+  const axC = Math.floor((a.origin.x + a.outerMax.x) / 2)
+  const bxC = Math.floor((b.origin.x + b.outerMax.x) / 2)
+
+  if (a.outerMax.x < b.origin.x) {
+    // A is west of B — go X first, then Z
+    tube(a.outerMax.x, b.origin.x, azC - 1, azC + 1)
+    punchWall(a.outerMax.x, azC, 'x')
+    if (Math.abs(azC - bzC) > 2) {
+      tube(b.origin.x - 1, b.origin.x + 1, azC, bzC)
+    }
+    punchWall(b.origin.x, bzC, 'x')
+  } else if (b.outerMax.x < a.origin.x) {
+    tube(b.outerMax.x, a.origin.x, bzC - 1, bzC + 1)
+    punchWall(b.outerMax.x, bzC, 'x')
+    if (Math.abs(azC - bzC) > 2) {
+      tube(a.origin.x - 1, a.origin.x + 1, azC, bzC)
+    }
+    punchWall(a.origin.x, azC, 'x')
+  } else if (a.outerMax.z < b.origin.z) {
+    tube(axC - 1, axC + 1, a.outerMax.z, b.origin.z)
+    punchWall(axC, a.outerMax.z, 'z')
+    if (Math.abs(axC - bxC) > 2) {
+      tube(axC, bxC, b.origin.z - 1, b.origin.z + 1)
+    }
+    punchWall(bxC, b.origin.z, 'z')
+  } else if (b.outerMax.z < a.origin.z) {
+    tube(bxC - 1, bxC + 1, b.outerMax.z, a.origin.z)
+    punchWall(bxC, b.outerMax.z, 'z')
+    if (Math.abs(axC - bxC) > 2) {
+      tube(axC, bxC, a.origin.z - 1, a.origin.z + 1)
+    }
+    punchWall(axC, a.origin.z, 'z')
+  }
+
+  return { newBlocks, removeKeys }
 }
 
 // ─── Interior decoration ──────────────────────────────────────────────────────
@@ -910,6 +953,7 @@ export interface LayoutResult {
   blocks:     BlockEntry[]
   dimensions: Vec3
   origin:     Vec3
+  roomBounds: RoomBound[]
 }
 
 export function layoutBlueprint(blueprint: Blueprint): LayoutResult {
@@ -924,6 +968,8 @@ export function layoutBlueprint(blueprint: Blueprint): LayoutResult {
 
   const seen  = new Set<string>()
   const byId  = new Map(boxes.map(b => [b.room.id, b]))
+
+  let nDoorways = 0, nCorridors = 0, nShafts = 0
 
   for (const a of boxes) {
     for (const targetId of a.room.connects_to ?? []) {
@@ -940,18 +986,27 @@ export function layoutBlueprint(blueprint: Blueprint): LayoutResult {
 
       if (connType === 'shaft') {
         blocks = carveShaftOpening(blocks, a, b)
+        nShafts++
       } else if (connType === 'bridge') {
         blocks = blocks.concat(buildBridge(a, b, pal))
       } else {
         const wall = findSharedWall(a, b)
         if (wall) {
           blocks = carveDoorway(blocks, wall)
+          nDoorways++
         } else {
-          blocks = blocks.concat(buildCorridor(a, b, pal))
+          const { newBlocks, removeKeys } = buildCorridor(a, b, pal)
+          if (removeKeys.size > 0) {
+            blocks = blocks.filter(bl => !removeKeys.has(`${bl.x},${bl.y},${bl.z}`))
+          }
+          blocks = blocks.concat(newBlocks)
+          nCorridors++
         }
       }
     }
   }
+
+  console.log(`[Connectivity] ${nDoorways} doorways punched, ${nCorridors} corridors generated, ${nShafts} shafts created`)
 
   if (blueprint.utility_gap) blocks = insertUtilityGaps(blocks, boxes)
 
@@ -966,10 +1021,28 @@ export function layoutBlueprint(blueprint: Blueprint): LayoutResult {
   }
   const normalized = blocks.map(b => ({ ...b, x: b.x - minX, y: b.y - minY, z: b.z - minZ }))
 
+  // Compute normalized room bounds for block-to-room lookup in the renderer
+  const roomBounds: RoomBound[] = boxes.map(box => ({
+    id:    box.room.id,
+    label: box.room.label || box.room.id,
+    type:  box.room.type,
+    min: {
+      x: box.origin.x - minX,
+      y: box.origin.y - minY,
+      z: box.origin.z - minZ,
+    },
+    max: {
+      x: box.outerMax.x - minX,
+      y: box.outerMax.y - minY,
+      z: box.outerMax.z - minZ,
+    },
+  }))
+
   return {
     blocks: normalized,
     dimensions: { x: maxX - minX + 1, y: maxY - minY + 1, z: maxZ - minZ + 1 },
     origin: { x: 0, y: 0, z: 0 },
+    roomBounds,
   }
 }
 
@@ -996,6 +1069,7 @@ export function blueprintToTemplate(
     })),
     connectionPorts: [],
     blocks: layout.blocks,
+    roomBounds: layout.roomBounds,
     materialList,
     styleProfile: {
       name:          blueprint.theme,
