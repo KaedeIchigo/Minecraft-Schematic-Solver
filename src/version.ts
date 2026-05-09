@@ -4,9 +4,18 @@ export interface ChangelogEntry {
   changes: string[]
 }
 
-export const APP_VERSION = '0.5.1'
+export const APP_VERSION = '0.5.2'
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    version: '0.5.2',
+    date: '2026-05-08',
+    changes: [
+      'Fixed greedy mesh geometry artifacts and z-fighting - switched to InstancedMesh per block type with hidden face culling as stable rendering foundation.',
+      'Restored block selection with raycasting, tooltip, room lookup, and wireframe highlight.',
+      'Fixed room connectivity pass - doorways, corridors, shafts and bridges now generate correctly.',
+    ],
+  },
   {
     version: '0.5.1',
     date: '2026-05-08',

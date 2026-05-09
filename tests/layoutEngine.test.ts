@@ -396,9 +396,11 @@ describe('layoutEngine', () => {
       ],
     })
     const { blocks } = layoutBlueprint(bp)
-    // outerMax.y of each room = 0 + 4 + 1 = 5. Bridge floor is at y=5.
-    const bridgeFloor = blocks.filter(b => b.y === 5 && b.x > 6 && b.x < 10)
+    // outerMax.y of each room = 0 + 4 + 1 = 5. Bridge floor is now ceiling height - 2.
+    const bridgeFloor = blocks.filter(b => b.y === 3 && b.x > 6 && b.x < 10)
     expect(bridgeFloor.length).toBeGreaterThan(0)
+    const railings = blocks.filter(b => b.blockId === 'minecraft:iron_bars' && b.y === 4)
+    expect(railings.length).toBeGreaterThan(0)
   })
 
   it('non-adjacent rooms with doorway connection get a corridor', () => {

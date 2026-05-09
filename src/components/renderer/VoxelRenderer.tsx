@@ -1,21 +1,52 @@
-import { Canvas, useThree, useFrame, invalidate } from '@react-three/fiber'
-import { OrbitControls, Grid } from '@react-three/drei'
-import React, { Suspense, useEffect, useMemo, useState, useRef } from 'react'
+import { Canvas, useFrame, useThree, invalidate } from '@react-three/fiber'
+import { Grid, OrbitControls } from '@react-three/drei'
+import React, { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import * as THREE from 'three'
-import type { BlockEntry, Anchor, ConnectionPort, Vec3 } from '@shared/types.js'
+import type { Anchor, BlockEntry, ConnectionPort, RoomBounds, Vec3 } from '@shared/types.js'
 import { getBlockColorForEntry } from '@shared/blockColors.js'
+import { getAllEntries } from '@shared/blockRegistry.js'
 
 // ---- Constants ----------------------------------------------------------
 
-const CHUNK_SIZE = 16
 const AIR_IDS = new Set(['minecraft:air', 'minecraft:cave_air'])
-
-// ---- Camera types -------------------------------------------------------
+const FACE_EPSILON = 0.001
 
 type CameraView = 'default' | 'top' | 'front'
 interface CameraCmd { view: CameraView; n: number }
 
-// ---- CameraController ---------------------------------------------------
+type FaceId = 'east' | 'west' | 'up' | 'down' | 'south' | 'north'
+
+interface FaceDef {
+  id: FaceId
+  normal: [number, number, number]
+  rotation: [number, number, number]
+}
+
+const FACE_DEFS: FaceDef[] = [
+  { id: 'east',  normal: [ 1,  0,  0], rotation: [0, Math.PI / 2, 0] },
+  { id: 'west',  normal: [-1,  0,  0], rotation: [0, -Math.PI / 2, 0] },
+  { id: 'up',    normal: [ 0,  1,  0], rotation: [-Math.PI / 2, 0, 0] },
+  { id: 'down',  normal: [ 0, -1,  0], rotation: [Math.PI / 2, 0, 0] },
+  { id: 'south', normal: [ 0,  0,  1], rotation: [0, 0, 0] },
+  { id: 'north', normal: [ 0,  0, -1], rotation: [0, Math.PI, 0] },
+]
+
+interface RegistryInfo {
+  displayName: string
+  category: string
+}
+
+const REGISTRY_BY_BLOCK_ID = new Map<string, RegistryInfo>()
+for (const entry of getAllEntries()) {
+  if (!REGISTRY_BY_BLOCK_ID.has(entry.blockId)) {
+    REGISTRY_BY_BLOCK_ID.set(entry.blockId, {
+      displayName: entry.displayName,
+      category: entry.category,
+    })
+  }
+}
+
+// ---- Camera / stats -----------------------------------------------------
 
 function CameraController({ cmd, center, defaultPos }: {
   cmd: CameraCmd
@@ -40,13 +71,10 @@ function CameraController({ cmd, center, defaultPos }: {
       c.update()
     }
     invalidate()
-  }, [cmd])
+  }, [camera, center, cmd, controls, defaultPos])
 
   return null
 }
-
-// ---- FPS counter --------------------------------------------------------
-// FPSUpdater runs inside Canvas (useFrame), writes to a DOM ref outside Canvas
 
 function FPSUpdater({ domRef }: { domRef: React.RefObject<HTMLDivElement | null> }) {
   const frames = useRef(0)
@@ -66,276 +94,307 @@ function FPSUpdater({ domRef }: { domRef: React.RefObject<HTMLDivElement | null>
   return null
 }
 
-// ---- Greedy meshing + face occlusion ------------------------------------
+// ---- Instanced exposed faces -------------------------------------------
+// TODO: Greedy meshing can be re-attempted later. For now, exposed face
+// instancing is the stable foundation: no cross-layer merged quads, no torn
+// geometry, and a direct instanceId -> block lookup for inspection.
 
-interface CellInfo {
+interface BlockRenderInfo {
+  block: BlockEntry
   color: string
   emissive: boolean
   transparent: boolean
 }
 
-interface QuadAccum {
-  positions: number[]
-  normals:   number[]
-  uvs:       number[]
-  indices:   number[]
+interface FaceInstance {
+  block: BlockEntry
+  face: FaceDef
 }
 
-// [axis, side, uAxis, vAxis]
-const FACE_AXES: [0|1|2, 1|-1, 0|1|2, 0|1|2][] = [
-  [0, 1, 1, 2],
-  [0, -1, 1, 2],
-  [1, 1, 0, 2],
-  [1, -1, 0, 2],
-  [2, 1, 0, 1],
-  [2, -1, 0, 1],
-]
+interface FaceGroup {
+  key: string
+  color: string
+  emissive: boolean
+  transparent: boolean
+  instances: FaceInstance[]
+}
 
-const NORMALS: [number,number,number][] = [
-  [1,0,0], [-1,0,0], [0,1,0], [0,-1,0], [0,0,1], [0,0,-1],
-]
+interface RaycastTarget {
+  mesh: THREE.InstancedMesh
+  lookup: BlockEntry[]
+}
 
-function buildCellMaps(blocks: BlockEntry[]) {
-  const cellMap = new Map<string, CellInfo>()
+function posKey(x: number, y: number, z: number): string {
+  return `${x},${y},${z}`
+}
+
+function blockStateKey(block: BlockEntry): string {
+  const state = Object.entries(block.blockState ?? {})
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([k, v]) => `${k}=${v}`)
+    .join(',')
+  return `${block.blockId}|${state}`
+}
+
+function makeGroupKey(info: BlockRenderInfo): string {
+  return `${blockStateKey(info.block)}|${info.color}|${info.emissive ? 'E' : 'R'}`
+}
+
+function buildFaceGroups(blocks: BlockEntry[]): FaceGroup[] {
+  const blockMap = new Map<string, BlockRenderInfo>()
   const solidSet = new Set<string>()
-  let minX = Infinity, minY = Infinity, minZ = Infinity
-  let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity
 
-  for (const b of blocks) {
-    if (AIR_IDS.has(b.blockId)) continue
-    const { color, emissive } = getBlockColorForEntry(b)
+  for (const block of blocks) {
+    if (AIR_IDS.has(block.blockId)) continue
+    const colorEntry = getBlockColorForEntry(block)
+    const color = colorEntry.color || '#888888'
     const transparent = color.length > 7
-    const key = `${b.x},${b.y},${b.z}`
-    cellMap.set(key, { color, emissive: !!emissive, transparent })
-    if (!transparent) solidSet.add(key)
-    if (b.x < minX) minX = b.x; if (b.x > maxX) maxX = b.x
-    if (b.y < minY) minY = b.y; if (b.y > maxY) maxY = b.y
-    if (b.z < minZ) minZ = b.z; if (b.z > maxZ) maxZ = b.z
+    const info: BlockRenderInfo = {
+      block,
+      color,
+      emissive: !!colorEntry.emissive,
+      transparent,
+    }
+    blockMap.set(posKey(block.x, block.y, block.z), info)
+    if (!transparent) solidSet.add(posKey(block.x, block.y, block.z))
   }
-  return { cellMap, solidSet, minX, minY, minZ, maxX, maxY, maxZ }
-}
 
-function buildChunkGeometries(
-  cellMap: Map<string, CellInfo>,
-  solidSet: Set<string>,
-  cx: number, cy: number, cz: number,
-): Map<string, { geo: THREE.BufferGeometry; emissive: boolean }> {
-  // Map from "E:#rrggbb" or "R:#rrggbb" → QuadAccum
-  const accum = new Map<string, QuadAccum>()
+  const groups = new Map<string, FaceGroup>()
+  for (const info of blockMap.values()) {
+    for (const face of FACE_DEFS) {
+      const neighbor = posKey(
+        info.block.x + face.normal[0],
+        info.block.y + face.normal[1],
+        info.block.z + face.normal[2],
+      )
+      if (solidSet.has(neighbor)) continue
 
-  const x0 = cx * CHUNK_SIZE, x1 = x0 + CHUNK_SIZE
-  const y0 = cy * CHUNK_SIZE, y1 = y0 + CHUNK_SIZE
-  const z0 = cz * CHUNK_SIZE, z1 = z0 + CHUNK_SIZE
-
-  for (let fi = 0; fi < 6; fi++) {
-    const [axis, side, uAxis, vAxis] = FACE_AXES[fi]
-    const normal = NORMALS[fi]
-
-    const axisMin = axis === 0 ? x0 : axis === 1 ? y0 : z0
-    const axisMax = axis === 0 ? x1 : axis === 1 ? y1 : z1
-    const uMin    = uAxis === 0 ? x0 : uAxis === 1 ? y0 : z0
-    const uMax    = uAxis === 0 ? x1 : uAxis === 1 ? y1 : z1
-    const vMin    = vAxis === 0 ? x0 : vAxis === 1 ? y0 : z0
-    const vMax    = vAxis === 0 ? x1 : vAxis === 1 ? y1 : z1
-
-    const uSize = uMax - uMin
-    const vSize = vMax - vMin
-
-    const neighborDelta: [number,number,number] = [0, 0, 0]
-    neighborDelta[axis] = side
-
-    for (let sl = axisMin; sl < axisMax; sl++) {
-      // Build 2D mask for this slice
-      const mask: (string | null)[] = new Array(uSize * vSize).fill(null)
-
-      for (let u = 0; u < uSize; u++) {
-        for (let v = 0; v < vSize; v++) {
-          const pos: [number,number,number] = [0, 0, 0]
-          pos[axis]  = sl
-          pos[uAxis] = uMin + u
-          pos[vAxis] = vMin + v
-
-          const key = `${pos[0]},${pos[1]},${pos[2]}`
-          const cell = cellMap.get(key)
-          if (!cell) continue
-
-          const np: [number,number,number] = [
-            pos[0] + neighborDelta[0],
-            pos[1] + neighborDelta[1],
-            pos[2] + neighborDelta[2],
-          ]
-          const nkey = `${np[0]},${np[1]},${np[2]}`
-          // Face is visible only if neighbor is not solid (allows transparent neighbors)
-          if (solidSet.has(nkey)) continue
-
-          mask[u * vSize + v] = cell.emissive ? `E:${cell.color}` : `R:${cell.color}`
+      const key = makeGroupKey(info)
+      let group = groups.get(key)
+      if (!group) {
+        group = {
+          key,
+          color: info.color,
+          emissive: info.emissive,
+          transparent: info.transparent,
+          instances: [],
         }
+        groups.set(key, group)
       }
-
-      // Greedy merge
-      const done = new Uint8Array(uSize * vSize)
-
-      for (let u = 0; u < uSize; u++) {
-        for (let v = 0; v < vSize; v++) {
-          const idx = u * vSize + v
-          if (done[idx] || mask[idx] === null) continue
-
-          const faceKey = mask[idx]!
-
-          // Extend v
-          let dv = 1
-          while (v + dv < vSize && mask[u * vSize + v + dv] === faceKey && !done[u * vSize + v + dv]) dv++
-
-          // Extend u
-          let du = 1
-          extend: while (u + du < uSize) {
-            for (let k = 0; k < dv; k++) {
-              const i2 = (u + du) * vSize + v + k
-              if (mask[i2] !== faceKey || done[i2]) break extend
-            }
-            du++
-          }
-
-          // Mark done
-          for (let du2 = 0; du2 < du; du2++)
-            for (let dv2 = 0; dv2 < dv; dv2++)
-              done[(u + du2) * vSize + v + dv2] = 1
-
-          // Emit quad
-          const worldU = uMin + u
-          const worldV = vMin + v
-          const axisCoord = sl + (side > 0 ? 1 : 0)
-
-          let q = accum.get(faceKey)
-          if (!q) {
-            q = { positions: [], normals: [], uvs: [], indices: [] }
-            accum.set(faceKey, q)
-          }
-
-          const base = q.positions.length / 3
-          const p0: [number,number,number] = [0,0,0]
-          const p1: [number,number,number] = [0,0,0]
-          const p2: [number,number,number] = [0,0,0]
-          const p3: [number,number,number] = [0,0,0]
-
-          p0[axis] = p1[axis] = p2[axis] = p3[axis] = axisCoord
-
-          if (side > 0) {
-            p0[uAxis] = worldU;    p0[vAxis] = worldV
-            p1[uAxis] = worldU+du; p1[vAxis] = worldV
-            p2[uAxis] = worldU+du; p2[vAxis] = worldV+dv
-            p3[uAxis] = worldU;    p3[vAxis] = worldV+dv
-          } else {
-            p0[uAxis] = worldU+du; p0[vAxis] = worldV
-            p1[uAxis] = worldU;    p1[vAxis] = worldV
-            p2[uAxis] = worldU;    p2[vAxis] = worldV+dv
-            p3[uAxis] = worldU+du; p3[vAxis] = worldV+dv
-          }
-
-          q.positions.push(...p0, ...p1, ...p2, ...p3)
-          for (let k = 0; k < 4; k++) q.normals.push(...normal)
-          q.uvs.push(0,0, du,0, du,dv, 0,dv)
-          q.indices.push(base, base+1, base+2, base, base+2, base+3)
-        }
-      }
+      group.instances.push({ block: info.block, face })
     }
   }
 
-  const result = new Map<string, { geo: THREE.BufferGeometry; emissive: boolean }>()
-  for (const [key, q] of accum) {
-    if (q.indices.length === 0) continue
-    const geo = new THREE.BufferGeometry()
-    geo.setAttribute('position', new THREE.Float32BufferAttribute(q.positions, 3))
-    geo.setAttribute('normal',   new THREE.Float32BufferAttribute(q.normals, 3))
-    geo.setAttribute('uv',       new THREE.Float32BufferAttribute(q.uvs, 2))
-    geo.setIndex(q.indices)
-    geo.computeBoundingSphere()
-    result.set(key, { geo, emissive: key.startsWith('E:') })
-  }
-  return result
+  return Array.from(groups.values())
 }
 
-// ---- Chunk mesh component -----------------------------------------------
+function applyFaceMatrix(object: THREE.Object3D, instance: FaceInstance) {
+  const { block, face } = instance
+  object.position.set(
+    block.x + 0.5 + face.normal[0] * (0.5 + FACE_EPSILON),
+    block.y + 0.5 + face.normal[1] * (0.5 + FACE_EPSILON),
+    block.z + 0.5 + face.normal[2] * (0.5 + FACE_EPSILON),
+  )
+  object.rotation.set(face.rotation[0], face.rotation[1], face.rotation[2])
+  object.scale.set(1, 1, 1)
+  object.updateMatrix()
+}
 
-function ChunkMesh({
-  chunkGeos,
-}: {
-  chunkGeos: Map<string, { geo: THREE.BufferGeometry; emissive: boolean }>
+function InstancedFaceMesh({ group, targetsRef }: {
+  group: FaceGroup
+  targetsRef: React.MutableRefObject<RaycastTarget[]>
 }) {
-  const mats = useMemo(() => {
-    const m = new Map<string, THREE.Material>()
-    for (const [key, { geo: _geo, emissive }] of chunkGeos) {
-      const colorHex = key.slice(2)
-      const transparent = colorHex.length > 7
-      const opacity = transparent ? 0.6 : 1
-      if (emissive) {
-        m.set(key, new THREE.MeshStandardMaterial({
-          color: colorHex.slice(0, 7),
-          emissive: colorHex.slice(0, 7),
-          emissiveIntensity: 0.55,
-          transparent,
-          opacity,
-          side: THREE.FrontSide,
-        }))
-      } else {
-        m.set(key, new THREE.MeshLambertMaterial({
-          color: colorHex.slice(0, 7),
-          transparent,
-          opacity,
-          side: THREE.FrontSide,
-        }))
-      }
+  const meshRef = useRef<THREE.InstancedMesh>(null)
+  const geometry = useMemo(() => new THREE.PlaneGeometry(1, 1), [])
+  const material = useMemo(() => {
+    const color = group.color.slice(0, 7)
+    const opacity = group.transparent ? 0.6 : 1
+    if (group.emissive) {
+      return new THREE.MeshStandardMaterial({
+        color,
+        emissive: color,
+        emissiveIntensity: 0.55,
+        transparent: group.transparent,
+        opacity,
+        depthWrite: !group.transparent,
+        side: THREE.DoubleSide,
+      })
     }
-    return m
-  }, [chunkGeos])
+    return new THREE.MeshLambertMaterial({
+      color,
+      transparent: group.transparent,
+      opacity,
+      depthWrite: !group.transparent,
+      side: THREE.DoubleSide,
+    })
+  }, [group.color, group.emissive, group.transparent])
 
-  useEffect(() => () => { for (const mat of mats.values()) mat.dispose() }, [mats])
-  useEffect(() => () => { for (const { geo } of chunkGeos.values()) geo.dispose() }, [chunkGeos])
+  useEffect(() => () => {
+    geometry.dispose()
+    material.dispose()
+  }, [geometry, material])
+
+  useEffect(() => {
+    const mesh = meshRef.current
+    if (!mesh) return
+    const temp = new THREE.Object3D()
+    for (let i = 0; i < group.instances.length; i++) {
+      applyFaceMatrix(temp, group.instances[i])
+      mesh.setMatrixAt(i, temp.matrix)
+    }
+    mesh.instanceMatrix.needsUpdate = true
+    mesh.computeBoundingBox()
+    mesh.computeBoundingSphere()
+    mesh.userData.blockLookup = group.instances.map(i => i.block)
+    invalidate()
+  }, [group.instances])
+
+  useEffect(() => {
+    const mesh = meshRef.current
+    if (!mesh) return
+    const target = { mesh, lookup: group.instances.map(i => i.block) }
+    targetsRef.current = targetsRef.current.filter(t => t.mesh !== mesh).concat(target)
+    return () => {
+      targetsRef.current = targetsRef.current.filter(t => t.mesh !== mesh)
+    }
+  }, [group.instances, targetsRef])
+
+  return (
+    <instancedMesh
+      ref={meshRef}
+      args={[geometry, material, group.instances.length]}
+      frustumCulled
+    />
+  )
+}
+
+function VoxelMesh({ blocks, targetsRef }: {
+  blocks: BlockEntry[]
+  targetsRef: React.MutableRefObject<RaycastTarget[]>
+}) {
+  const groups = useMemo(() => buildFaceGroups(blocks), [blocks])
 
   return (
     <>
-      {Array.from(chunkGeos.entries()).map(([key, { geo }]) => {
-        const mat = mats.get(key)
-        if (!mat) return null
-        return <mesh key={key} geometry={geo} material={mat} frustumCulled />
-      })}
+      {groups.map(group => (
+        <InstancedFaceMesh key={group.key} group={group} targetsRef={targetsRef} />
+      ))}
     </>
   )
 }
 
-// ---- VoxelMesh (chunked) ------------------------------------------------
-
-function VoxelMesh({ blocks }: {
-  blocks: BlockEntry[]
+function RaycastController({ targetsRef, onPick }: {
+  targetsRef: React.MutableRefObject<RaycastTarget[]>
+  onPick: (block: BlockEntry | null, screen: { x: number; y: number }) => void
 }) {
-  const chunkData = useMemo(() => {
-    if (blocks.length === 0) return new Map<string, Map<string, {geo: THREE.BufferGeometry; emissive: boolean}>>()
+  const { camera, gl } = useThree()
+  const raycaster = useMemo(() => new THREE.Raycaster(), [])
+  const mouse = useMemo(() => new THREE.Vector2(), [])
 
-    const { cellMap, solidSet, minX, minY, minZ, maxX, maxY, maxZ } = buildCellMaps(blocks)
+  useEffect(() => {
+    function handleClick(event: MouseEvent) {
+      const rect = gl.domElement.getBoundingClientRect()
+      mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1
+      mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1
+      raycaster.setFromCamera(mouse, camera)
 
-    const cxMin = Math.floor(minX / CHUNK_SIZE)
-    const cyMin = Math.floor(minY / CHUNK_SIZE)
-    const czMin = Math.floor(minZ / CHUNK_SIZE)
-    const cxMax = Math.floor(maxX / CHUNK_SIZE)
-    const cyMax = Math.floor(maxY / CHUNK_SIZE)
-    const czMax = Math.floor(maxZ / CHUNK_SIZE)
+      const targets = targetsRef.current.filter(t => t.mesh.parent)
+      const hits = raycaster.intersectObjects(targets.map(t => t.mesh), false)
+      const hit = hits.find(h => typeof h.instanceId === 'number')
+      if (!hit || typeof hit.instanceId !== 'number') {
+        onPick(null, { x: event.clientX, y: event.clientY })
+        return
+      }
 
-    const chunks = new Map<string, Map<string, {geo: THREE.BufferGeometry; emissive: boolean}>>()
-    for (let cx = cxMin; cx <= cxMax; cx++)
-      for (let cy = cyMin; cy <= cyMax; cy++)
-        for (let cz = czMin; cz <= czMax; cz++) {
-          const geos = buildChunkGeometries(cellMap, solidSet, cx, cy, cz)
-          if (geos.size > 0) chunks.set(`${cx},${cy},${cz}`, geos)
-        }
-    return chunks
-  }, [blocks])
+      const target = targets.find(t => t.mesh === hit.object)
+      onPick(target?.lookup[hit.instanceId] ?? null, { x: event.clientX, y: event.clientY })
+    }
+
+    gl.domElement.addEventListener('click', handleClick)
+    return () => gl.domElement.removeEventListener('click', handleClick)
+  }, [camera, gl.domElement, mouse, onPick, raycaster, targetsRef])
+
+  return null
+}
+
+// ---- Selection helpers --------------------------------------------------
+
+interface SelectionState {
+  block: BlockEntry
+  x: number
+  y: number
+  displayName: string
+  category: string
+  roomName: string
+  color: string
+}
+
+function fallbackDisplayName(blockId: string): string {
+  const name = blockId.split(':').pop() ?? blockId
+  return name.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+}
+
+function getBlockInfo(block: BlockEntry): RegistryInfo {
+  return REGISTRY_BY_BLOCK_ID.get(block.blockId) ?? {
+    displayName: fallbackDisplayName(block.blockId),
+    category: 'unknown',
+  }
+}
+
+function findRoomForBlock(block: BlockEntry, roomBounds: RoomBounds[]): string {
+  const room = roomBounds.find(r =>
+    block.x >= r.min.x && block.x <= r.max.x &&
+    block.y >= r.min.y && block.y <= r.max.y &&
+    block.z >= r.min.z && block.z <= r.max.z
+  )
+  if (!room) return 'Unknown'
+  return `${room.label || room.id} (${room.type})`
+}
+
+function SelectionTooltip({ selection }: { selection: SelectionState }) {
+  return (
+    <div
+      className="absolute z-20 rounded text-xs shadow-lg"
+      style={{
+        left: selection.x + 12,
+        top: selection.y + 12,
+        maxWidth: 320,
+        background: 'rgba(13,17,23,0.95)',
+        border: '1px solid #30363d',
+        color: '#d1d5db',
+        padding: '10px 12px',
+        pointerEvents: 'none',
+      }}
+    >
+      <div className="flex items-center gap-2 mb-1">
+        <span
+          className="inline-block w-3 h-3 rounded-sm border border-gray-500"
+          style={{ background: selection.color }}
+        />
+        <span className="font-semibold text-white">{selection.displayName}</span>
+      </div>
+      <div className="font-mono text-gray-300">{selection.block.blockId}</div>
+      <div className="text-gray-400">Position: {selection.block.x}, {selection.block.y}, {selection.block.z}</div>
+      <div className="text-gray-400">Category: {selection.category}</div>
+      <div className="text-gray-400">Room: {selection.roomName}</div>
+    </div>
+  )
+}
+
+function SelectedBlockHighlight({ block }: { block: BlockEntry }) {
+  const geometry = useMemo(() => {
+    const box = new THREE.BoxGeometry(1.04, 1.04, 1.04)
+    const edges = new THREE.EdgesGeometry(box)
+    box.dispose()
+    return edges
+  }, [])
+
+  useEffect(() => () => geometry.dispose(), [geometry])
 
   return (
-    <>
-      {Array.from(chunkData.entries()).map(([key, geos]) => (
-        <ChunkMesh key={key} chunkGeos={geos} />
-      ))}
-    </>
+    <lineSegments position={[block.x + 0.5, block.y + 0.5, block.z + 0.5]} geometry={geometry}>
+      <lineBasicMaterial color="#ffffff" depthTest={false} />
+    </lineSegments>
   )
 }
 
@@ -345,6 +404,7 @@ interface VoxelRendererProps {
   blocks: BlockEntry[]
   anchors?: Anchor[]
   ports?: ConnectionPort[]
+  roomBounds?: RoomBounds[]
   dimensions?: Vec3
   showGrid?: boolean
   showBounds?: boolean
@@ -359,17 +419,21 @@ interface VoxelRendererProps {
 // ---- Main component -----------------------------------------------------
 
 export default function VoxelRenderer({
-  blocks, anchors = [], ports = [],
+  blocks, anchors = [], ports = [], roomBounds = [],
   dimensions,
   showGrid = true, showBounds = true, showAnchors = true,
-  showAir = false, showStats: _showStats = false,
+  showAir = false, showStats = false,
   layerY = null,
   orthographic = false,
-  onBlockClick: _onBlockClick,
+  onBlockClick,
 }: VoxelRendererProps) {
   const [camCmd, setCamCmd] = useState<CameraCmd>({ view: 'default', n: 0 })
-  const [showFPS, setShowFPS] = useState(false)
+  const [showFPS, setShowFPS] = useState(showStats)
+  const [selection, setSelection] = useState<SelectionState | null>(null)
   const fpsRef = useRef<HTMLDivElement>(null)
+  const raycastTargetsRef = useRef<RaycastTarget[]>([])
+
+  useEffect(() => setShowFPS(showStats), [showStats])
 
   const visibleBlocks = useMemo(() => {
     return blocks.filter(b => {
@@ -396,11 +460,29 @@ export default function VoxelRenderer({
     return Math.max(1, Math.min(20, 200 / Math.max(dimensions.x, dimensions.z)))
   }, [dimensions])
 
+  const handlePick = useCallback((block: BlockEntry | null, screen: { x: number; y: number }) => {
+    if (!block) {
+      setSelection(null)
+      return
+    }
+    const info = getBlockInfo(block)
+    const color = getBlockColorForEntry(block).color.slice(0, 7)
+    setSelection({
+      block,
+      x: screen.x,
+      y: screen.y,
+      displayName: info.displayName,
+      category: info.category,
+      roomName: findRoomForBlock(block, roomBounds),
+      color,
+    })
+    onBlockClick?.(block)
+  }, [onBlockClick, roomBounds])
+
   function triggerView(view: CameraView) {
     setCamCmd(c => ({ view, n: c.n + 1 }))
   }
 
-  // F key toggles FPS overlay
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'f' || e.key === 'F') setShowFPS(v => !v)
@@ -410,8 +492,10 @@ export default function VoxelRenderer({
   }, [])
 
   return (
-    <div style={{ width: '100%', height: '100%', background: '#1a1a2e', position: 'relative' }}>
-      {/* Camera control buttons */}
+    <div
+      style={{ width: '100%', height: '100%', background: '#1a1a2e', position: 'relative' }}
+      onMouseLeave={() => setSelection(null)}
+    >
       <div className="absolute top-2 right-2 z-10 flex gap-1">
         {(['default', 'top', 'front'] as CameraView[]).map(v => (
           <button
@@ -446,7 +530,10 @@ export default function VoxelRenderer({
           <directionalLight position={[10, 20, 10]} intensity={0.9} />
           <directionalLight position={[-10, 5, -10]} intensity={0.3} />
 
-          <VoxelMesh blocks={visibleBlocks} />
+          <VoxelMesh blocks={visibleBlocks} targetsRef={raycastTargetsRef} />
+          <RaycastController targetsRef={raycastTargetsRef} onPick={handlePick} />
+
+          {selection && <SelectedBlockHighlight block={selection.block} />}
 
           {showAnchors && anchors.map(a => <AnchorMarker key={a.id} anchor={a} />)}
           {showAnchors && ports.map(p => <PortMarker key={p.id} port={p} />)}
@@ -481,6 +568,8 @@ export default function VoxelRenderer({
         </Suspense>
       </Canvas>
 
+      {selection && <SelectionTooltip selection={selection} />}
+
       {showFPS && (
         <div
           ref={fpsRef}
@@ -498,7 +587,7 @@ export default function VoxelRenderer({
   )
 }
 
-// ---- Anchor marker ------------------------------------------------------
+// ---- Anchor / port / bounds overlays -----------------------------------
 
 function AnchorMarker({ anchor }: { anchor: Anchor }) {
   const { position } = anchor
@@ -511,8 +600,6 @@ function AnchorMarker({ anchor }: { anchor: Anchor }) {
     </group>
   )
 }
-
-// ---- Port marker --------------------------------------------------------
 
 function PortMarker({ port }: { port: ConnectionPort }) {
   const { position } = port
@@ -532,8 +619,6 @@ function PortMarker({ port }: { port: ConnectionPort }) {
   )
 }
 
-// ---- Bounding box -------------------------------------------------------
-
 function BoundingBox({ dimensions }: { dimensions: Vec3 }) {
   const { x, y, z } = dimensions
   const geo = useMemo(() => {
@@ -542,7 +627,9 @@ function BoundingBox({ dimensions }: { dimensions: Vec3 }) {
     g.dispose()
     return eg
   }, [x, y, z])
+
   useEffect(() => () => geo.dispose(), [geo])
+
   return (
     <lineSegments position={[x / 2, y / 2, z / 2]} geometry={geo}>
       <lineBasicMaterial color="#44AAFF" />

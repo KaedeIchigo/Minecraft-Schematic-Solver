@@ -13,6 +13,7 @@ function rowToTemplate(row: Record<string, unknown>): TemplateModule {
     origin: JSON.parse(row.origin as string),
     anchors: JSON.parse(row.anchors as string),
     connectionPorts: JSON.parse(row.connection_ports as string),
+    roomBounds: row.room_bounds ? JSON.parse(row.room_bounds as string) : [],
     blocks: JSON.parse(row.blocks as string),
     materialList: JSON.parse(row.material_list as string),
     styleProfile: JSON.parse(row.style_profile as string),
@@ -68,13 +69,13 @@ export function createTemplate(tmpl: Omit<TemplateModule, 'id' | 'createdAt' | '
 
   db.prepare(`
     INSERT INTO templates (id, project_id, name, category, tags, dimensions, origin, anchors,
-      connection_ports, blocks, material_list, style_profile, source_images, notes,
+      connection_ports, room_bounds, blocks, material_list, style_profile, source_images, notes,
       design_brief, source_prompt, export_status, compatibility_notes, related_module_ids, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id, full.projectId, full.name, full.category,
     JSON.stringify(full.tags), JSON.stringify(full.dimensions), JSON.stringify(full.origin),
-    JSON.stringify(full.anchors), JSON.stringify(full.connectionPorts), JSON.stringify(full.blocks),
+    JSON.stringify(full.anchors), JSON.stringify(full.connectionPorts), JSON.stringify(full.roomBounds ?? []), JSON.stringify(full.blocks),
     JSON.stringify(full.materialList), JSON.stringify(full.styleProfile), JSON.stringify(full.sourceImages),
     full.notes, full.designBrief ? JSON.stringify(full.designBrief) : null, full.sourcePrompt ?? null,
     full.exportStatus, full.compatibilityNotes, JSON.stringify(full.relatedModuleIds), now, now
@@ -92,13 +93,13 @@ export function updateTemplate(id: string, patch: Partial<TemplateModule>): Temp
 
   db.prepare(`
     UPDATE templates SET name=?, category=?, tags=?, dimensions=?, origin=?, anchors=?,
-      connection_ports=?, blocks=?, material_list=?, style_profile=?, source_images=?,
+      connection_ports=?, room_bounds=?, blocks=?, material_list=?, style_profile=?, source_images=?,
       notes=?, design_brief=?, source_prompt=?, export_status=?, compatibility_notes=?,
       related_module_ids=?, updated_at=? WHERE id=?
   `).run(
     merged.name, merged.category, JSON.stringify(merged.tags),
     JSON.stringify(merged.dimensions), JSON.stringify(merged.origin), JSON.stringify(merged.anchors),
-    JSON.stringify(merged.connectionPorts), JSON.stringify(merged.blocks),
+    JSON.stringify(merged.connectionPorts), JSON.stringify(merged.roomBounds ?? []), JSON.stringify(merged.blocks),
     JSON.stringify(merged.materialList), JSON.stringify(merged.styleProfile), JSON.stringify(merged.sourceImages),
     merged.notes, merged.designBrief ? JSON.stringify(merged.designBrief) : null, merged.sourcePrompt ?? null,
     merged.exportStatus, merged.compatibilityNotes, JSON.stringify(merged.relatedModuleIds), now, id

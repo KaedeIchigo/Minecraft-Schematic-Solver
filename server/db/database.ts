@@ -45,6 +45,7 @@ function migrate(db: Database.Database) {
       origin TEXT NOT NULL DEFAULT '{"x":0,"y":0,"z":0}',
       anchors TEXT NOT NULL DEFAULT '[]',
       connection_ports TEXT NOT NULL DEFAULT '[]',
+      room_bounds TEXT NOT NULL DEFAULT '[]',
       blocks TEXT NOT NULL DEFAULT '[]',
       material_list TEXT NOT NULL DEFAULT '[]',
       style_profile TEXT NOT NULL DEFAULT '{}',
@@ -82,6 +83,11 @@ function migrate(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_templates_category ON templates(category);
     CREATE INDEX IF NOT EXISTS idx_exported_template ON exported_templates(template_id);
   `)
+
+  const templateColumns = db.prepare('PRAGMA table_info(templates)').all() as Array<{ name: string }>
+  if (!templateColumns.some(c => c.name === 'room_bounds')) {
+    db.prepare("ALTER TABLE templates ADD COLUMN room_bounds TEXT NOT NULL DEFAULT '[]'").run()
+  }
 }
 
 export function closeDb() {

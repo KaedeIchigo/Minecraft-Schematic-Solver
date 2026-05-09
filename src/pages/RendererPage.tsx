@@ -163,6 +163,7 @@ export default function RendererPage() {
             blocks={template.blocks}
             anchors={template.anchors}
             ports={template.connectionPorts}
+            roomBounds={template.roomBounds}
             dimensions={template.dimensions}
             showGrid={showGrid}
             showBounds={showBounds}
